@@ -31,8 +31,10 @@ OutputVector translate_get_rows(const NodeContext & context) {
 
     // data[1,b,x,y] ind[1,1,b,x'] test-backend-ops case
     // data[x,y] ind[1,1,1,x'] normal case
-    indices =
-        std::make_shared<ov::op::v0::Squeeze>(indices, ov::op::v0::Constant::create(ov::element::i64, {2}, {0, 1}));
+    if (indices.get_partial_shape().rank() == 4) {
+        indices =
+            std::make_shared<ov::op::v0::Squeeze>(indices, ov::op::v0::Constant::create(ov::element::i64, {2}, {0, 1}));
+    }
     if (data.get_partial_shape().rank() == 4) {
         auto axis = ov::op::v0::Constant::create(ov::element::i32, ov::Shape{}, {1});
         data = std::make_shared<ov::op::v0::Squeeze>(data, ov::op::v0::Constant::create(ov::element::i64, {1}, {0}));

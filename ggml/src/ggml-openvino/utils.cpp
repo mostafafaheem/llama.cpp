@@ -418,7 +418,6 @@ std::map<ggml_type, ExtraQuantType> get_types_to_requant(const std::string & dev
             {GGML_TYPE_Q4_0, ExtraQuantType::Q4_0_128},
             {GGML_TYPE_Q4_1, ExtraQuantType::Q4_0_128},
             {GGML_TYPE_Q4_K, ExtraQuantType::Q4_0_128},
-            {GGML_TYPE_Q6_K, ExtraQuantType::F16     },
             {GGML_TYPE_Q5_K, ExtraQuantType::F16     },
         };
     }
@@ -504,6 +503,9 @@ ov::Tensor get_ov_input_tensor_static_decode(std::shared_ptr<GgmlOvDecoder> ggml
         (op->op == GGML_OP_SET_ROWS && op->src[1] == ggml_tensor)) {
         assert(ggml_tensor->ne[0] == 1);
         ov::Shape input_shape = {1, 1, 1, 1};
+        if (param_name == "inp_tokens") {
+            input_shape.erase(input_shape.begin(), input_shape.begin() + 2);
+        }
         ov::Tensor input_tensor(ggml_decoder->get_ov_type(ggml_tensor), input_shape);
         if (ggml_tensor->type == GGML_TYPE_I32) {
             *input_tensor.data<int32_t>() = *((int32_t *) ggml_tensor->data);
@@ -551,6 +553,9 @@ ov::Tensor get_ov_input_tensor_static_prefill(std::shared_ptr<GgmlOvDecoder> ggm
     if (param_name == "inp_pos" || param_name == "inp_tokens" ||
         (op->op == GGML_OP_SET_ROWS && op->src[1] == ggml_tensor)) {
         ov::Shape input_shape = {1, 1, 1, chunk_size};
+        if (param_name == "inp_tokens") {
+            input_shape.erase(input_shape.begin(), input_shape.begin() + 2);
+        }
         ov::Tensor input_tensor(ggml_decoder->get_ov_type(ggml_tensor), input_shape);
         // copy the chunk_index-th chunk from ggml_tensor
         size_t element_size = ggml_type_size(ggml_tensor->type);

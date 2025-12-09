@@ -367,6 +367,12 @@ ov::PartialShape GgmlOvDecoder::get_graph_input_shape(const ggml_tensor * op, co
         int len = m_is_static ? (m_is_prefill ? m_prefill_chunk_size : 1) : -1;
         input_shape = ov::PartialShape{1, 1, 1, len};
 
+        if (m_is_static && name == "inp_tokens") {
+            auto shape = input_shape.to_shape();
+            shape.erase(shape.begin(), shape.begin() + 2);
+            input_shape = ov::PartialShape(shape);
+        }
+
     } else if (name == "inp_out_ids") {
         input_shape = ov::PartialShape{1, 1, 1, m_is_static ? m_compute_params.output_len : -1};
 
