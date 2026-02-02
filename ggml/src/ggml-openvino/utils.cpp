@@ -50,7 +50,9 @@ enum ggml_status ov_graph_compute(ggml_cgraph * cgraph) {
     if (getenv("GGML_OPENVINO_STATEFUL_EXECUTION") && !is_static) {
         stateful = true;
     }
-    return is_static ? ov_graph_compute_static(cgraph) : ov_graph_compute_dynamic(cgraph, device, stateful);
+
+    return ov_graph_compute_dynamic(cgraph, device, stateful);
+    // return is_static ? ov_graph_compute_static(cgraph) : ov_graph_compute_dynamic(cgraph, device, stateful);
 }
 
 enum ggml_status ov_graph_compute_dynamic(ggml_cgraph * cgraph, const std::string & device, bool stateful) {

@@ -402,14 +402,6 @@ ov::PartialShape GgmlOvDecoder::get_graph_input_shape(const ggml_tensor * op, co
             input_shape = ov::PartialShape{-1, 1, -1, -1};
         }
 
-    } else if (op && op->op == GGML_OP_SET_ROWS && op->src[2] == input) {
-        // kvcache
-        input_shape = ov::PartialShape{get_shape(input)};
-        if (!m_is_static) {
-            // do not fix ctx size to make llama-bench work
-            input_shape[2] = -1;
-        }
-
     } else if (op && op->op == GGML_OP_SET_ROWS && op->src[1] == input) {
         // kv update index
         int len = m_is_static ? (m_is_prefill ? m_prefill_chunk_size : 1) : -1;
