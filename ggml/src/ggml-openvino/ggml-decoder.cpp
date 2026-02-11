@@ -171,7 +171,8 @@ void GgmlOvDecoder::set_input_output(ggml_tensor * node, bool naive) {
         if (!naive && !src->view_src) {
             ggml_backend_buffer * buffer = src->buffer;
 
-            if (buffer->usage == GGML_BACKEND_BUFFER_USAGE_ANY || src->flags & GGML_TENSOR_FLAG_INPUT) {
+            if (buffer->usage == GGML_BACKEND_BUFFER_USAGE_ANY || src->flags & GGML_TENSOR_FLAG_INPUT ||
+                src_name.find("OPENVINO#") == 0) {
                 ov::PartialShape stateful_kv_shape;
                 // GGML_BACKEND_BUFFER_USAGE_ANY are kv caches
                 if (buffer->usage == GGML_BACKEND_BUFFER_USAGE_ANY) {
@@ -401,6 +402,11 @@ ov::PartialShape GgmlOvDecoder::get_graph_input_shape(const ggml_tensor * op, co
         // tokens or positions
         int len = m_is_static ? (m_is_prefill ? m_prefill_chunk_size : 1) : -1;
         input_shape = ov::PartialShape{1, 1, 1, len};
+
+    } else if (is_inp_emb(input, op)) {
+        // embeddings
+        input_shape = ov::PartialShape{get_shape(input)};
+        input_shape[2] = -1;
 
     } else if (is_output_idx(input, op)) {
         // output index

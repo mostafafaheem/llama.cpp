@@ -226,7 +226,7 @@ public:
     }
 
     inline static bool is_inp_emb(const ggml_tensor * tensor, const ggml_tensor * op) {
-        return tensor->op == GGML_OP_GET_ROWS && op->op == GGML_OP_RMS_NORM;
+        return op->op == GGML_OP_RMS_NORM && (tensor->op == GGML_OP_GET_ROWS || tensor->op == GGML_OP_NONE);
     }
 
     inline static bool is_inp_mask(const ggml_tensor * tensor, const ggml_tensor * op) {
