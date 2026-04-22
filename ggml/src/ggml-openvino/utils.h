@@ -89,6 +89,8 @@ size_t checksum(const void * data, size_t size);
 
 bool save_ggml_tensor_data_to_txt(const ggml_tensor * tensor, const std::string & file_path);
 
+bool save_ov_tensor_data_to_txt(const ov::Tensor & tensor, const std::string & name, const std::string & file_path);
+
 void print_input_tensor_info(const std::string & name, const ov::Tensor & tensor);
 
 void print_output_tensor_info(const std::string & name, const ov::Tensor & tensor, const void * output_dst);
@@ -124,6 +126,16 @@ void set_zero_diagonal(std::vector<float> & matrix, size_t rows, size_t cols);
 const ggml_tensor * get_inp_pos_tensor(struct ggml_cgraph * cgraph);
 
 bool get_is_prefill(const ggml_tensor * inp_pos);
+
+struct kv_shift_info {
+    size_t n_keep;     // tokens preserved at the front (e.g. BOS)
+    size_t n_discard;  // tokens removed from the middle
+    size_t n_shifted;  // tokens shifted back (still valid)
+};
+
+// Given the k_shift tensor from a context-shift graph, return the breakdown
+// of kept / discarded / shifted token counts.
+kv_shift_info get_kv_shift_info(const ggml_tensor * k_shift);
 
 ov::Tensor get_ov_input_tensor(std::shared_ptr<GgmlOvDecoder> ggml_decoder, const std::string & param_name);
 ov::Tensor get_ov_input_tensor_static_decode(std::shared_ptr<GgmlOvDecoder> ggml_decoder,

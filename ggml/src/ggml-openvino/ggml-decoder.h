@@ -27,6 +27,8 @@ struct ModelParams {
     std::vector<std::string> kv_names;
     size_t kv_buffer_ctx_id = 0;
 
+    bool is_complete() const { return ctx > 0 && ctx_per_seq > 0 && n_heads > 0 && head_size > 0; }
+
     bool same_rope_params(const ModelParams & other) const {
         return memcmp(rope_params, other.rope_params, sizeof(int32_t) * 15) == 0;
     }

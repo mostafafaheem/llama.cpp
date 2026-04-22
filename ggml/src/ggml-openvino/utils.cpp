@@ -83,7 +83,7 @@ enum ggml_status ov_graph_compute_dynamic(ggml_cgraph * cgraph, std::shared_ptr<
     auto & core = ov_singleton_core();
     const auto & config = ggml_openvino_get_compile_config();
     const auto & device = r_ctx->device;
-    const auto & stateful = r_ctx->stateful;
+    auto stateful = r_ctx->stateful;
     static auto is_static = false;
 
     if (is_naive(cgraph)) {
@@ -103,6 +103,11 @@ enum ggml_status ov_graph_compute_dynamic(ggml_cgraph * cgraph, std::shared_ptr<
     graph_key key(cgraph);
     bool cache_hit;
 
+    if (stateful && !m_params.is_complete()) {
+        // graph is not a LLM, e.g. context-shift graph
+        stateful = false;
+    }
+
     int64_t decoder_end_time;
     int64_t conversion_end_time;
     int64_t compile_end_time;
@@ -121,7 +126,17 @@ enum ggml_status ov_graph_compute_dynamic(ggml_cgraph * cgraph, std::shared_ptr<
             } else {
                 auto mutex = std::make_shared<std::mutex>();
                 entry = std::make_shared<decoder_runtime_ctx>(mutex);
-                r_ctx->decoder_cache[key] = entry;
+                // for stateful mode, we only cache the first compiled model which should be the LLM
+                if (r_ctx->stateful) {
+                    if (m_params.is_complete()) {
+                        assert(r_ctx->decoder_cache.size() == 0);
+                        r_ctx->decoder_cache[key] = entry;
+                    } else {
+                        assert(r_ctx->decoder_cache.size() == 1);
+                    }
+                } else {
+                    r_ctx->decoder_cache[key] = entry;
+                }
             }
         }
 
@@ -148,15 +163,19 @@ enum ggml_status ov_graph_compute_dynamic(ggml_cgraph * cgraph, std::shared_ptr<
                 infer_request = r_ctx->infer_request_cache.at(key);
             }
 
-            if (stateful) {
+            if (r_ctx->stateful && m_params.is_complete()) {
                 const auto * inp_pos = get_inp_pos_tensor(cgraph);
                 int32_t * pos_data = (int32_t *) inp_pos->data;
-                auto pos_shape = ggml_decoder->get_shape(inp_pos);
+                int32_t pos_len = ggml_decoder->get_shape(inp_pos)[3];
+                int32_t pos_end = pos_data[pos_len - 1];
                 if (pos_data[0] == 0) {
                     infer_request->reset_state();
-                    r_ctx->stateful_kv_size = pos_shape[3];
+                    assert(pos_len == pos_end + 1);
+                    r_ctx->stateful_kv_size = pos_end + 1;
                 } else if (r_ctx->stateful_kv_size == static_cast<size_t>(pos_data[0])) {
-                    r_ctx->stateful_kv_size += pos_shape[3];
+                    assert(pos_data[0] + pos_len == pos_end + 1);
+                    r_ctx->stateful_kv_size = pos_end + 1;
+
                 } else {
                     auto states = infer_request->query_state();
                     for (auto state : states) {
@@ -182,7 +201,8 @@ enum ggml_status ov_graph_compute_dynamic(ggml_cgraph * cgraph, std::shared_ptr<
                         ov::Tensor new_state_tensor(state_tensor, begin, end);
                         state.set_state(new_state_tensor);
                     }
-                    r_ctx->stateful_kv_size = pos_data[0] + 1;
+                    assert(pos_data[0] + pos_len == pos_end + 1);
+                    r_ctx->stateful_kv_size = pos_end + 1;
                 }
             }
 
@@ -236,12 +256,14 @@ enum ggml_status ov_graph_compute_dynamic(ggml_cgraph * cgraph, std::shared_ptr<
 
             {
                 std::lock_guard<std::mutex> map_lock(r_ctx->ctx_mutex);
-                r_ctx->infer_request_cache[key] = infer_request;
+                if (!r_ctx->stateful || m_params.is_complete()) {
+                    r_ctx->infer_request_cache[key] = infer_request;
+                }
                 r_ctx->ov_input_names_cache[key] = std::move(ov_input_names);
                 r_ctx->ov_output_names_cache[key] = std::move(ov_output_names);
             }
 
-            if (stateful) {
+            if (r_ctx->stateful && m_params.is_complete()) {
                 const auto * inp_pos = get_inp_pos_tensor(cgraph);
                 auto pos_shape = ggml_decoder->get_shape(inp_pos);
                 r_ctx->stateful_kv_size = pos_shape[3];
@@ -260,6 +282,51 @@ enum ggml_status ov_graph_compute_dynamic(ggml_cgraph * cgraph, std::shared_ptr<
             ov_output_names = r_ctx->ov_output_names_cache[key];
         }
 
+        if (r_ctx->stateful && !m_params.is_complete()) {
+            // copy kv states back to ggml tensor
+            auto infer_request_llm = r_ctx->infer_request_cache.begin()->second;
+            auto ggml_decoder_llm = r_ctx->decoder_cache.begin()->second->ptr;
+            auto states = infer_request_llm->query_state();
+            for (const auto & state : states) {
+                auto state_tensor = state.get_state();
+                auto state_tensor_shape = state_tensor.get_shape();
+                // std::cout << "Initial KV cache state shape: " << state_tensor_shape << std::endl;
+                std::string state_name;
+                try {
+                    state_name = r_ctx->kv_state_input_name_map.at(state.get_name());
+                } catch (...) {
+                    GGML_LOG_ERROR("GGML OpenVINO backend stateful inference failed: no input found for the state\n");
+                    return GGML_STATUS_FAILED;
+                }
+                auto kv_tensor = get_ov_input_tensor(ggml_decoder_llm, state_name);
+                if (state_name.find('k') != std::string::npos) {
+                    // state tensor shape: [1, kv_len, head_num, head_size]
+                    // stateful changes the elements order inside the head_size dim to be interleaved, eg [1,3,5,..63,2,4,6,..64]
+                    // we need to manually copy the data to the ggml tensor with the correct order,
+                    // after copy the value should be [1,2,3,4,5,6,...,63,64]
+                    size_t half = state_tensor_shape[3] / 2;
+                    size_t elem_size = state_tensor.get_element_type().size();
+                    for (size_t i = 0; i < state_tensor_shape[0]; i++) {
+                        for (size_t j = 0; j < state_tensor_shape[1]; j++) {
+                            for (size_t k = 0; k < state_tensor_shape[2]; k++) {
+                                for (size_t l = 0; l < state_tensor_shape[3]; l++) {
+                                    size_t src_l = (l % 2 == 0) ? (l / 2) : (half + l / 2);
+                                    size_t base = ((i * state_tensor_shape[1] + j) * state_tensor_shape[2] + k) *
+                                                  state_tensor_shape[3];
+                                    size_t src_off = (base + src_l) * elem_size;
+                                    size_t dst_off = (base + l) * elem_size;
+                                    std::memcpy(static_cast<char *>(kv_tensor.data()) + dst_off,
+                                                static_cast<char *>(state_tensor.data()) + src_off, elem_size);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    memcpy(kv_tensor.data(), state_tensor.data(), state_tensor.get_byte_size());
+                }
+            }
+        }
+
         for (size_t i = 0; i < ov_input_names.size(); i++) {
             auto param_name = ov_input_names[i];
             auto input_tensor = get_ov_input_tensor(ggml_decoder, param_name);
@@ -267,6 +334,10 @@ enum ggml_status ov_graph_compute_dynamic(ggml_cgraph * cgraph, std::shared_ptr<
 
             if (getenv("GGML_OPENVINO_DEBUG_INPUT")) {
                 print_input_tensor_info(param_name, input_tensor);
+                // if (!m_params.is_complete()) {
+                //     save_ggml_tensor_data_to_txt(ggml_decoder->get_input_ggml_tensor(param_name),
+                //                                  param_name + "_input.txt");
+                // }
             }
         }
 
@@ -283,7 +354,82 @@ enum ggml_status ov_graph_compute_dynamic(ggml_cgraph * cgraph, std::shared_ptr<
             for (size_t i = 0; i < ov_output_names.size(); i++) {
                 const auto output_tensor = infer_request->get_output_tensor(i);
                 print_output_tensor_info(ov_output_names[i], output_tensor, output_tensor.data());
+                // if (!m_params.is_complete()) {
+                //     save_ggml_tensor_data_to_txt(ggml_decoder->get_model_outputs().at(ov_output_names[i]),
+                //                                  ov_output_names[i] + "_output.txt");
+                // }
             }
+        }
+
+        if (r_ctx->stateful && !m_params.is_complete()) {
+            // update kv states
+            auto shift_info = get_kv_shift_info(get_inp_pos_tensor(cgraph));
+            // std::cout << "KV cache shift: n_keep=" << shift_info.n_keep << " n_discard=" << shift_info.n_discard
+            //           << " n_shifted=" << shift_info.n_shifted << std::endl;
+            auto infer_request_llm = r_ctx->infer_request_cache.begin()->second;
+            auto ggml_decoder_llm = r_ctx->decoder_cache.begin()->second->ptr;
+            auto states = infer_request_llm->query_state();
+            for (auto & state : states) {
+                auto state_tensor_shape = state.get_state().get_shape();
+                auto shifted_kv_tensor = ov::Tensor(state.get_state().get_element_type(),
+                                                    {state_tensor_shape[0], shift_info.n_keep + shift_info.n_shifted,
+                                                     state_tensor_shape[2], state_tensor_shape[3]});
+
+                std::string state_name;
+                try {
+                    state_name = r_ctx->kv_state_input_name_map.at(state.get_name());
+                } catch (...) {
+                    GGML_LOG_ERROR("GGML OpenVINO backend stateful inference failed: no input found for the state\n");
+                    return GGML_STATUS_FAILED;
+                }
+                auto kv_tensor = get_ov_input_tensor(ggml_decoder_llm, state_name);
+                // state tensor shape: [1, kv_len, head_num, head_size]
+                // kv tensor shape: [1, 1, kv_len, head_num*head_size]
+                // overwrite the state tensor: copy the shift_info.n_keep to the front, and copy the shift_info.n_shifted afterward
+                auto token_size =
+                    shifted_kv_tensor.get_element_type().size() * state_tensor_shape[2] * state_tensor_shape[3];
+                auto size_keep = shift_info.n_keep * token_size;
+                auto size_discard = shift_info.n_discard * token_size;
+                auto size_shifted = shift_info.n_shifted * token_size;
+                memcpy(shifted_kv_tensor.data(), kv_tensor.data(), size_keep);
+                memcpy((char *) shifted_kv_tensor.data() + size_keep,
+                       (char *) kv_tensor.data() + size_keep + size_discard, size_shifted);
+
+                // reverse of the de-interleave: copy from shifted_kv_tensor (normal order [1,2,3,...,64])
+                // to state_tensor in interleaved order [1,3,5,...,63,2,4,6,...,64]
+                ov::Tensor state_tensor;
+                if (state_name.find('k') != std::string::npos) {
+                    state_tensor = ov::Tensor(shifted_kv_tensor.get_element_type(), shifted_kv_tensor.get_shape());
+                    auto shifted_shape = shifted_kv_tensor.get_shape();
+                    size_t half = shifted_shape[3] / 2;
+                    size_t elem_size = shifted_kv_tensor.get_element_type().size();
+                    for (size_t i = 0; i < shifted_shape[0]; i++) {
+                        for (size_t j = 0; j < shifted_shape[1]; j++) {
+                            for (size_t k = 0; k < shifted_shape[2]; k++) {
+                                for (size_t l = 0; l < shifted_shape[3]; l++) {
+                                    // destination index in interleaved layout
+                                    size_t dst_l = (l % 2 == 0) ? (l / 2) : (half + l / 2);
+                                    size_t base =
+                                        ((i * shifted_shape[1] + j) * shifted_shape[2] + k) * shifted_shape[3];
+                                    size_t src_off = (base + l) * elem_size;
+                                    size_t dst_off = (base + dst_l) * elem_size;
+                                    std::memcpy(static_cast<char *>(state_tensor.data()) + dst_off,
+                                                static_cast<char *>(shifted_kv_tensor.data()) + src_off, elem_size);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    state_tensor = shifted_kv_tensor;
+                }
+
+                // dump the shifted_kv_tensor and state_tensor
+                // save_ov_tensor_data_to_txt(shifted_kv_tensor, state_name, state_name + "_shifted_kv.txt");
+                // save_ov_tensor_data_to_txt(state_tensor, state_name, state_name + "_state_interleaved.txt");
+                // std::cout << "Updated KV cache state shape: " << state_tensor.get_shape() << std::endl;
+                state.set_state(state_tensor);
+            }
+            r_ctx->stateful_kv_size = shift_info.n_keep + shift_info.n_shifted;
         }
 
         if (getenv("GGML_OPENVINO_PROFILING")) {
@@ -339,6 +485,11 @@ enum ggml_status ov_graph_compute_static(ggml_cgraph * cgraph, std::shared_ptr<o
     const auto is_prefill = get_is_prefill(inp_pos);
     graph_key key(cgraph);
     bool cache_hit;
+
+    if (!m_params.is_complete()) {
+        // graph is not a LLM, e.g. context-shift graph
+        prefill_chunk_size = inp_pos->ne[0];
+    }
 
     int64_t decoder_end_time;
     int64_t conversion_end_time;
@@ -397,10 +548,6 @@ enum ggml_status ov_graph_compute_static(ggml_cgraph * cgraph, std::shared_ptr<o
         std::shared_ptr<ov::Model> model;
         auto model_weights = GgmlOvDecoder::create_weight_nodes(cgraph);
 
-        if (m_params.n_heads == -1) {
-            // graph is not a LLM, e.g. context-shift graph
-            prefill_chunk_size = inp_pos->ne[0];
-        }
         auto ggml_decoder_prefill = std::make_shared<GgmlOvDecoder>(cgraph, m_params, c_params, model_weights,
                                                                     is_static, stateful, false, true, prefill_chunk_size);
         auto ggml_decoder_decode = std::make_shared<GgmlOvDecoder>(cgraph, m_params, c_params, model_weights, is_static,
@@ -914,6 +1061,64 @@ bool save_ggml_tensor_data_to_txt(const ggml_tensor * tensor, const std::string 
     return true;
 }
 
+bool save_ov_tensor_data_to_txt(const ov::Tensor & tensor, const std::string & name, const std::string & file_path) {
+    if (tensor.data() == nullptr) {
+        return false;
+    }
+
+    std::ofstream out(file_path);
+    if (!out.is_open()) {
+        return false;
+    }
+
+    auto shape = tensor.get_shape();
+    const size_t n = tensor.get_size();
+    out << "name: " << name << ", type: " << tensor.get_element_type() << ", shape: [";
+    for (size_t i = 0; i < shape.size(); ++i) {
+        if (i > 0) {
+            out << ", ";
+        }
+        out << shape[i];
+    }
+    out << "]" << ", elements: " << n << ", data:" << '\n';
+
+    switch (tensor.get_element_type()) {
+    case ov::element::f32: {
+        const auto * data = tensor.data<float>();
+        for (size_t i = 0; i < n; ++i) {
+            out << data[i] << '\n';
+        }
+        break;
+    }
+    case ov::element::f16: {
+        const auto * data = tensor.data<ov::float16>();
+        for (size_t i = 0; i < n; ++i) {
+            out << static_cast<float>(data[i]) << '\n';
+        }
+        break;
+    }
+    case ov::element::i32: {
+        const auto * data = tensor.data<int32_t>();
+        for (size_t i = 0; i < n; ++i) {
+            out << data[i] << '\n';
+        }
+        break;
+    }
+    case ov::element::i64: {
+        const auto * data = tensor.data<int64_t>();
+        for (size_t i = 0; i < n; ++i) {
+            out << data[i] << '\n';
+        }
+        break;
+    }
+    default:
+        out << "unsupported tensor type for text dump" << '\n';
+        return false;
+    }
+
+    return true;
+}
+
 void print_input_tensor_info(const std::string & name, const ov::Tensor & tensor) {
     std::cout << "Input name: " << name << ", Input shape: " << tensor.get_shape() << ", Address: " << tensor.data()
               << std::endl;
@@ -1015,6 +1220,43 @@ void set_zero_diagonal(std::vector<float> & matrix, size_t rows, size_t cols) {
         size_t diag_col = std::min(i, cols - 1);
         matrix[i * cols + diag_col] = 0.0f;
     }
+}
+
+// This function does not work, because the shift tensor is not always n_keep followed by n_discard
+kv_shift_info get_kv_shift_info(const ggml_tensor * k_shift) {
+    GGML_ASSERT(k_shift->type == GGML_TYPE_I32);
+    const int32_t * data = (const int32_t *) k_shift->data;
+    const size_t n = k_shift->ne[0];
+
+    // The k_shift data layout after context shift (cell-indexed):
+    //   [0..0,   0..0,       -d..-d,     0..0        ]
+    //   n_keep   n_discard   n_shifted    trailing empty
+    //
+    // Empty (removed) cells and never-used trailing cells both have shift=0,
+    // so we cannot distinguish them from the kept prefix by value alone.
+    //
+    // We find n_keep from: first_neg_idx = n_keep + n_discard, and
+    // n_discard = abs(shift), so n_keep = first_neg_idx - abs(shift).
+    size_t first_neg = n;
+    size_t count_neg = 0;
+
+    for (size_t i = 0; i < n; i++) {
+        if (data[i] < 0) {
+            if (first_neg == n) {
+                first_neg = i;
+            }
+            count_neg++;
+        }
+    }
+
+    if (count_neg == 0) {
+        // No shift found – cache was not shifted.
+        return {n, 0, 0};
+    }
+
+    size_t n_discard = (size_t) (-data[first_neg]);
+    size_t n_keep = first_neg - n_discard;
+    return {n_keep, n_discard, count_neg};
 }
 
 const ggml_tensor * get_inp_pos_tensor(ggml_cgraph * cgraph) {
