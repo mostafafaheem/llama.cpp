@@ -1246,12 +1246,14 @@ std::string GgmlOvDecoder::compute_op_type(const ggml_tensor * node) {
         {GGML_OP_ACC,             "GGML_OP_ACC"            },
         {GGML_OP_ADD,             "GGML_OP_ADD"            },
         {GGML_OP_ADD1,            "GGML_OP_ADD1"           },
+        {GGML_OP_CONCAT,          "GGML_OP_CONCAT"         },
         {GGML_OP_CONT,            "GGML_OP_CONT"           },
         {GGML_OP_DIV,             "GGML_OP_DIV"            },
         {GGML_OP_DUP,             "GGML_OP_DUP"            },
         {GGML_OP_GET_ROWS,        "GGML_OP_GET_ROWS"       },
         {GGML_OP_MUL,             "GGML_OP_MUL"            },
         {GGML_OP_MUL_MAT,         "GGML_OP_MUL_MAT"        },
+        {GGML_OP_MUL_MAT_ID,      "GGML_OP_MUL_MAT_ID"     },
         {GGML_OP_PERMUTE,         "GGML_OP_PERMUTE"        },
         {GGML_OP_RESHAPE,         "GGML_OP_RESHAPE"        },
         {GGML_OP_RMS_NORM,        "GGML_OP_RMS_NORM"       },
@@ -1259,6 +1261,7 @@ std::string GgmlOvDecoder::compute_op_type(const ggml_tensor * node) {
         {GGML_OP_ROPE,            "GGML_OP_ROPE"           },
         {GGML_OP_SCALE,           "GGML_OP_SCALE"          },
         {GGML_OP_SOFT_MAX,        "GGML_OP_SOFT_MAX"       },
+        {GGML_OP_SUM_ROWS,        "GGML_OP_SUM_ROWS"       },
         {GGML_OP_SUB,             "GGML_OP_SUB"            },
         {GGML_OP_TRANSPOSE,       "GGML_OP_TRANSPOSE"      },
         {GGML_OP_VIEW,            "GGML_OP_VIEW"           },
@@ -1266,9 +1269,11 @@ std::string GgmlOvDecoder::compute_op_type(const ggml_tensor * node) {
         {GGML_OP_CPY,             "GGML_OP_CPY"            },
         {GGML_OP_FLASH_ATTN_EXT,  "GGML_OP_FLASH_ATTN_EXT" },
         {GGML_OP_L2_NORM,         "GGML_OP_L2_NORM"        },
+        {GGML_OP_CLAMP,           "GGML_OP_CLAMP"          },
         {GGML_OP_PAD,             "GGML_OP_PAD"            },
         {GGML_OP_SSM_CONV,        "GGML_OP_SSM_CONV"       },
-        {GGML_OP_GATED_DELTA_NET, "GGML_OP_GATED_DELTA_NET"}
+        {GGML_OP_GATED_DELTA_NET, "GGML_OP_GATED_DELTA_NET"},
+        {GGML_OP_ARGSORT,         "GGML_OP_ARGSORT"        }
     };
     static const std::map<ggml_unary_op, std::string> unary_ops = {
         {GGML_UNARY_OP_ABS,         "GGML_UNARY_OP_ABS"        },
@@ -1282,6 +1287,7 @@ std::string GgmlOvDecoder::compute_op_type(const ggml_tensor * node) {
         {GGML_UNARY_OP_GELU,        "GGML_UNARY_OP_GELU"       },
         {GGML_UNARY_OP_GELU_QUICK,  "GGML_UNARY_OP_GELU_QUICK" },
         {GGML_UNARY_OP_SILU,        "GGML_UNARY_OP_SILU"       },
+        {GGML_UNARY_OP_SOFTPLUS,    "GGML_UNARY_OP_SOFTPLUS"   },
         {GGML_UNARY_OP_HARDSWISH,   "GGML_UNARY_OP_HARDSWISH"  },
         {GGML_UNARY_OP_HARDSIGMOID, "GGML_UNARY_OP_HARDSIGMOID"},
         {GGML_UNARY_OP_EXP,         "GGML_UNARY_OP_EXP"        },
