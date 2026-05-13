@@ -1020,6 +1020,7 @@ static bool ggml_backend_openvino_device_supports_op(ggml_backend_dev_t dev, con
 
     static const std::set<ggml_op> supported_ops{GGML_OP_NONE,
                                                  GGML_OP_ADD,
+                                                 GGML_OP_CONCAT,
                                                  GGML_OP_DIV,
                                                  GGML_OP_MUL,
                                                  GGML_OP_MUL_MAT,
@@ -1047,6 +1048,7 @@ static bool ggml_backend_openvino_device_supports_op(ggml_backend_dev_t dev, con
     static const std::set<ggml_unary_op> supported_unary_ops{
         GGML_UNARY_OP_GELU,
         GGML_UNARY_OP_SILU,
+        GGML_UNARY_OP_SOFTPLUS,
         GGML_UNARY_OP_TANH,
     };
     static const std::set<ggml_glu_op> supported_glu_ops{
@@ -1059,11 +1061,6 @@ static bool ggml_backend_openvino_device_supports_op(ggml_backend_dev_t dev, con
         auto supported = supported_unary_ops.find(ggml_get_unary_op(op)) != supported_unary_ops.end();
         if (!supported) {
             // GGML_LOG_WARN("OpenVINO backend does not support unary op %s\n", ggml_unary_op_name(ggml_get_unary_op(op)));
-            return false;
-        }
-        if (has_view_op_input(op)) {
-            // GGML_LOG_WARN("OpenVINO backend does not support unary op %s with view input\n",
-            //               ggml_unary_op_name(ggml_get_unary_op(op)));
             return false;
         }
         break;
@@ -1092,9 +1089,6 @@ static bool ggml_backend_openvino_device_supports_op(ggml_backend_dev_t dev, con
             return false;
         }
         static std::set<ggml_op> ops_not_support_view_input{
-            GGML_OP_GET_ROWS,
-            GGML_OP_RMS_NORM,
-            GGML_OP_NORM,
             GGML_OP_L2_NORM,
         };
         if (ops_not_support_view_input.find(op->op) != ops_not_support_view_input.end() && has_view_op_input(op)) {
