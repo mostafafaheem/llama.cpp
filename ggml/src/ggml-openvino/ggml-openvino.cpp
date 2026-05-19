@@ -943,7 +943,8 @@ static bool is_op_unsupported_case(const ggml_tensor * op) {
         break;
     }
     case GGML_OP_CPY: {
-        if (!ggml_is_contiguous(op->src[0]) || !ggml_is_contiguous(op->src[1]) || op->src[0]->type == GGML_TYPE_BF16 || op->src[1]->type == GGML_TYPE_BF16) {
+        if (!ggml_is_contiguous(op->src[1]) || op->src[0]->type == GGML_TYPE_BF16 ||
+            op->src[1]->type == GGML_TYPE_BF16) {
             // GGML_LOG_WARN("OpenVINO backend does not support CPY with non-contiguous data or bf16 types\n");
             return true;
         }
