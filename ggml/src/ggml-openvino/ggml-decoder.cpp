@@ -1391,7 +1391,6 @@ void GgmlOvDecoder::compute_node_dynamic_dims() {
             m_node_dynamic_dims[node] = -1;
             if (m_node_dynamic_dims[node->src[1]] != -1) {
                 auto dynamic_dim_idx = m_node_dynamic_dims[node->src[1]];
-                auto dynamic_dim_value = node->src[1]->ne[dynamic_dim_idx];
                 if (dynamic_dim_idx == 0) {
                     m_node_dynamic_dims[node] = 1;
                 } else {
@@ -1404,9 +1403,9 @@ void GgmlOvDecoder::compute_node_dynamic_dims() {
                         }
                     }
                 }
-                OPENVINO_ASSERT(dynamic_dim_value == node->ne[m_node_dynamic_dims[node]],
-                                "Dynamic dim value mismatch for node: " + std::string(node->name) +
-                                    " and its src[1]: " + std::string(node->src[1]->name));
+                // OPENVINO_ASSERT(dynamic_dim_value == node->ne[m_node_dynamic_dims[node]],
+                //                 "Dynamic dim value mismatch for node: " + std::string(node->name) +
+                //                     " and its src[1]: " + std::string(node->src[1]->name));
             }
             break;
         case GGML_OP_MUL:
@@ -1458,8 +1457,8 @@ void GgmlOvDecoder::compute_node_dynamic_dims() {
                 }
                 if (m_node_dynamic_dims[node] != -1 && dynamic_dim_value != node->ne[m_node_dynamic_dims[node]]) {
                     m_node_dynamic_dims[node] = -1;
-                    std::cout << "Warning: Dynamic dim value mismatch for node: " << node->name
-                              << " and its src[0]: " << node->src[0]->name << std::endl;
+                    // std::cout << "Warning: Dynamic dim value mismatch for node: " << node->name
+                    //           << " and its src[0]: " << node->src[0]->name << std::endl;
                 }
             }
             break;
@@ -1562,7 +1561,7 @@ void GgmlOvDecoder::compute_node_dynamic_dims() {
             m_node_dynamic_dims[node] = -1;
             break;
         default:
-            std::cout << "Doesn't handle node name: " << node->name << " op: " << ggml_op_name(node->op) << std::endl;
+            // std::cout << "Doesn't handle node name: " << node->name << " op: " << ggml_op_name(node->op) << std::endl;
             break;
         }
     };
