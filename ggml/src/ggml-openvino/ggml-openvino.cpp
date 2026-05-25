@@ -871,6 +871,20 @@ static bool is_op_unsupported_case(const ggml_tensor * op) {
             // ERR = 0.000000197 > 0.000000100   GET_ROWS(type=q5_K,n=256,m=5,r=4,be1=1,be2=1,v=0)
             return true;
         }
+
+        // Keep the MoE routing weights gather on CPU for GPU runs. Splitting
+        // only at the later SUM/CLAMP/DIV nodes still leaves this routing path
+        // numerically unstable for arctic-style MoE graphs.
+        if (strncmp(op->name, "ffn_moe_weights", sizeof("ffn_moe_weights") - 1) == 0) {
+            return true;
+        }
+        break;
+    }
+    case GGML_OP_RESHAPE: {
+        if (strncmp(op->name, "ffn_moe_weights", sizeof("ffn_moe_weights") - 1) == 0 ||
+            strncmp(op->name, "ffn_norm_exps", sizeof("ffn_norm_exps") - 1) == 0) {
+            return true;
+        }
         break;
     }
     case GGML_OP_ADD:
@@ -908,8 +922,7 @@ static bool is_op_unsupported_case(const ggml_tensor * op) {
 
         // qwen3next MoE weight normalization is numerically sensitive on the GPU
         // path. Keep the normalization divide on CPU to match the reference.
-        if (ggml_openvino_get_device_name() == "GPU" &&
-            strncmp(op->name, "ffn_moe_weights_norm", sizeof("ffn_moe_weights_norm") - 1) == 0) {
+        if (strncmp(op->name, "ffn_moe_weights_norm", sizeof("ffn_moe_weights_norm") - 1) == 0) {
             return true;
         }
         break;
@@ -919,11 +932,23 @@ static bool is_op_unsupported_case(const ggml_tensor * op) {
             // GGML_LOG_WARN("OpenVINO backend does not support SOFT_MAX with sinks\n");
             return true;
         }
+
+        if (strncmp(op->name, "ffn_moe_probs", sizeof("ffn_moe_probs") - 1) == 0) {
+            return true;
+        }
+
+        // GPU execution of the MoE routing weights softmax is numerically unstable
+        // when fused with the surrounding GET_ROWS/reshape path. Keep this softmax
+        // on CPU so the scheduler splits at the same boundary that restores parity.
+        if (op->src[0] != nullptr && op->src[0]->op == GGML_OP_RESHAPE &&
+            op->src[0]->src[0] != nullptr &&
+            strncmp(op->src[0]->src[0]->name, "ffn_moe_weights", sizeof("ffn_moe_weights") - 1) == 0) {
+            return true;
+        }
         break;
     }
     case GGML_OP_SUM_ROWS: {
-        if (ggml_openvino_get_device_name() == "GPU" &&
-            strncmp(op->name, "ffn_moe_weights_sum", sizeof("ffn_moe_weights_sum") - 1) == 0) {
+        if (strncmp(op->name, "ffn_moe_weights_sum", sizeof("ffn_moe_weights_sum") - 1) == 0) {
             return true;
         }
 
@@ -934,13 +959,16 @@ static bool is_op_unsupported_case(const ggml_tensor * op) {
          break;
     }
     case GGML_OP_CLAMP: {
-        if (ggml_openvino_get_device_name() == "GPU" &&
-            strncmp(op->name, "ffn_moe_weights_sum_clamped", sizeof("ffn_moe_weights_sum_clamped") - 1) == 0) {
+        if (strncmp(op->name, "ffn_moe_weights_sum_clamped", sizeof("ffn_moe_weights_sum_clamped") - 1) == 0) {
             return true;
         }
         break;
     }
     case GGML_OP_FLASH_ATTN_EXT: {
+        // qwen3next currently shows large accuracy drift in OpenVINO flash attention.
+        // Keep FLASH_ATTN_EXT on CPU until parity is restored.
+        // return true;
+
         if (op->src[4] != nullptr) {
             // GGML_LOG_WARN("OpenVINO backend does not support FLASH_ATTN_EXT with sinks\n");
             return true;
@@ -987,6 +1015,12 @@ static bool is_op_unsupported_case(const ggml_tensor * op) {
         break;
     }
     case GGML_OP_MUL_MAT: {
+        if (ggml_openvino_get_device_name() == "GPU" && op->src[1]->op == GGML_OP_SOFT_MAX &&
+            op->src[0]->op == GGML_OP_CONT && op->src[0]->src[0] != nullptr &&
+            op->src[0]->src[0]->op == GGML_OP_TRANSPOSE && op->src[0]->src[0]->src[0] != nullptr &&
+            op->src[0]->src[0]->src[0]->op == GGML_OP_PERMUTE) {
+            return true;
+        }
         if (op->src[0]->type == GGML_TYPE_F16 && op->src[1]->type == GGML_TYPE_F16) {
             // Has accuracy issue, try enabling this and see `test-backend-ops -o "MUL_MAT"`
             // GGML_LOG_WARN("OpenVINO backend does not support MUL_MAT with two F16 tensors\n");
@@ -1006,6 +1040,11 @@ static bool is_op_unsupported_case(const ggml_tensor * op) {
         break;
     }
     case GGML_OP_MUL_MAT_ID: {
+        if (strncmp(op->name, "ffn_moe_gate_up", sizeof("ffn_moe_gate_up") - 1) == 0 ||
+            strncmp(op->name, "ffn_moe_down", sizeof("ffn_moe_down") - 1) == 0) {
+            return true;
+        }
+
         if (mul_mat_id_requires_large_tmp(op)) {
             return true;
         }
@@ -1077,6 +1116,11 @@ static bool is_op_unsupported_case(const ggml_tensor * op) {
             return true;
         }
         break;
+    }
+    case GGML_OP_SSM_CONV: {
+        // qwen3next is numerically unstable with OpenVINO SSM_CONV.
+        // Keep this op on CPU until the OpenVINO implementation is fixed.
+        return true;
     }
     default:
         break;
