@@ -66,7 +66,7 @@ The following models were validated on Intel® Core™ Ultra Series 2. While our
 | :------| :---------- | :-------------|
 | [Llama-3.2-1B-Instruct](https://huggingface.co/unsloth/Llama-3.2-1B-Instruct-GGUF/) | `FP16`, `Q8_0`, `Q4_0`, `Q4_1`, `Q4_K_M` on CPU/GPU/NPU | — |
 | [Meta-Llama-3.1-8B-Instruct](https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF) | `Q8_0`, `Q4_K_M` on CPU/GPU/NPU | `Q4_0_8_8`, `Q4_0_4_8`, `Q4_0_4_4` fail |
-| [Phi-3-mini-4k-instruct](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf) | `FP16`, `Q4` on CPU/NPU | GPU unsupported for `FP16` and `Q4` (`llama-cli`, `llama-bench`) |
+| [Phi-3-mini-4k-instruct](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf) | `FP16`, `Q4` on CPU/GPU/NPU | — |
 | [Qwen2.5-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF) | `FP16`, `Q8_0`, `Q4_0`, `Q4_1`, `Q4_K_M` on CPU/GPU/NPU | — |
 | [Qwen3-8B-Instruct](https://huggingface.co/Qwen/Qwen3-8B-GGUF) | `FP16`, `Q8_0`, `Q4_0`, `Q4_1`, `Q4_K_M` on CPU/NPU; GPU works via `llama-bench` | GPU `llama-cli` unsupported for all quantizations |
 | [MiniCPM-V-2_6-GGUF](https://huggingface.co/openbmb/MiniCPM-V-2_6-gguf) | `Q4_0` on CPU/GPU/NPU | — |
