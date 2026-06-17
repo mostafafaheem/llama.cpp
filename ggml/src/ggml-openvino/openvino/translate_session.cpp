@@ -6,6 +6,7 @@
 #include "ggml-openvino/openvino/utils.h"
 #include "input_model.h"
 #include "pass/fuse_to_conv.h"
+#include "ov_graph_export.h"
 #include "pass/mark_decompression_convert_constant_folding.h"
 #include "pass/mark_dequantization_subgraph.h"
 #include "pass/squeeze_matmul.h"
@@ -354,7 +355,18 @@ std::shared_ptr<Model> TranslateSession::translate_graph(const frontend::InputMo
     // }
     resulting_model = std::make_shared<Model>(results, used_params);
 
+    // dump the backend-stage graph (before and after our own passes, pre device plugin)
+    // for the graph viewer; GGML_OPENVINO_DUMP_GRAPH_JSON=<path base> enables it.
+    const char * graph_json_base = ggml_openvino_getenv_str("GGML_OPENVINO_DUMP_GRAPH_JSON");
+    if (graph_json_base) {
+        dump_ov_model_json(resulting_model, graph_json_base, "translated");
+    }
+
     apply_transformations(resulting_model);
+
+    if (graph_json_base) {
+        dump_ov_model_json(resulting_model, graph_json_base, "post_backend_passes");
+    }
 
     // Set WeightlessCacheAttribute on large constants to avoid unnecessary memory copies
     // in the NPUW plugin. Without this attribute, NPUW's LazyTensor constructor
@@ -389,7 +401,10 @@ std::shared_ptr<Model> TranslateSession::translate_graph(const frontend::InputMo
 std::shared_ptr<Model> TranslateSession::apply_transformations(std::shared_ptr<Model> model) {
     auto ggml_model_decoder = std::dynamic_pointer_cast<InputModel>(m_input_model)->get_model_decoder();
     {
-        ov::pass::Manager manager;
+        // name the manager only when pass profiling is enabled, so this backend stage
+        // is identifiable in OV_ENABLE_PROFILE_PASS output; otherwise keep OV's default
+        // name so behavior is unchanged when the feature is off
+        ov::pass::Manager manager(getenv("OV_ENABLE_PROFILE_PASS") ? "GgmlBackendTransformations" : "UnnamedManager");
         manager.set_per_pass_validation(true);
         manager.register_pass<ov::pass::MarkCompressedFloatConstants>();
         // Marks the Convert/Subtract/Multiply nodes of our GatherMatmul dequantization chain

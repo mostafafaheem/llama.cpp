@@ -7,6 +7,7 @@
 #include "model-cache.h"
 #include "openvino/frontend.h"
 #include "openvino/input_model.h"
+#include "openvino/ov_graph_export.h"
 
 #include <algorithm>
 #include <cassert>
@@ -485,6 +486,11 @@ enum ggml_status ov_graph_compute_dynamic(ggml_cgraph * cgraph, std::shared_ptr<
                     }
                 }
 
+                if (const char * rt_base = ggml_openvino_getenv_str("GGML_OPENVINO_DUMP_GRAPH_JSON_RT")) {
+                    ov::frontend::ggml::dump_ov_model_json(compiled_model.get_runtime_model(), rt_base,
+                                                           "runtime_" + device);
+                }
+
                 infer_request = std::make_shared<ov::InferRequest>(compiled_model.create_infer_request());
                 entry->ptr = ggml_decoder;
 
@@ -752,6 +758,13 @@ enum ggml_status ov_graph_compute_static(ggml_cgraph * cgraph, std::shared_ptr<o
         conversion_end_time = std::max(prefill_conversion_end_time, decode_conversion_end_time);
         compile_end_time = std::max(prefill_compile_end_time, decode_compile_end_time);
 
+        if (const char * rt_base = ggml_openvino_getenv_str("GGML_OPENVINO_DUMP_GRAPH_JSON_RT")) {
+            ov::frontend::ggml::dump_ov_model_json(compiled_model_prefill.get_runtime_model(), rt_base,
+                                                   "runtime_prefill_" + device);
+            ov::frontend::ggml::dump_ov_model_json(compiled_model_decode.get_runtime_model(), rt_base,
+                                                   "runtime_decode_" + device);
+        }
+
         model = is_prefill ? model_prefill : model_decode;
         ggml_decoder = is_prefill ? ggml_decoder_prefill : ggml_decoder_decode;
         infer_request = is_prefill ? infer_request_prefill : infer_request_decode;
@@ -983,13 +996,16 @@ enum ggml_status naive_compute(ggml_cgraph * cgraph,
     } else {
         core.set_property(device, ov::hint::execution_mode(ov::hint::ExecutionMode::ACCURACY));
     }
+    ov::CompiledModel compiled_model;
     if (remote_context.has_value()) {
-        infer_request = std::make_shared<ov::InferRequest>(
-            core.compile_model(model, remote_context.value(), config).create_infer_request());
+        compiled_model = core.compile_model(model, remote_context.value(), config);
     } else {
-        infer_request =
-            std::make_shared<ov::InferRequest>(core.compile_model(model, device, config).create_infer_request());
+        compiled_model = core.compile_model(model, device, config);
     }
+    if (const char * rt_base = ggml_openvino_getenv_str("GGML_OPENVINO_DUMP_GRAPH_JSON_RT")) {
+        ov::frontend::ggml::dump_ov_model_json(compiled_model.get_runtime_model(), rt_base, "runtime_naive_" + device);
+    }
+    infer_request = std::make_shared<ov::InferRequest>(compiled_model.create_infer_request());
 
     auto ov_params = model->get_parameters();
     for (size_t i = 0; i < ov_params.size(); i++) {
