@@ -90,11 +90,8 @@ int main(int argc, char ** argv) {
         mparams.warmup           = params.warmup;
         mparams.image_min_tokens = params.image_min_tokens;
         mparams.image_max_tokens = params.image_max_tokens;
-        {
-            // always enable debug callback
-            mparams.cb_eval_user_data = &cb_data;
-            mparams.cb_eval = common_debug_cb_eval;
-        }
+        mparams.cb_eval_user_data = params.cb_eval_user_data;
+        mparams.cb_eval           = params.cb_eval;
         ctx_mtmd.reset(mtmd_init_from_file(clip_path, model, mparams));
         if (!ctx_mtmd.get()) {
             LOG_ERR("Failed to load vision model from %s\n", clip_path);

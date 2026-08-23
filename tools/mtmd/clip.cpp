@@ -3931,7 +3931,14 @@ int clip_n_output_tokens_x(const clip_ctx * ctx, const clip_image_f32 * img) {
         case PROJECTOR_TYPE_MUSE_GLIMMER:
             return (img->nx() / params.patch_size) / 2;
         case PROJECTOR_TYPE_STEP3VL:
-            return img->nx() / (params.patch_size * params.n_merge);
+        case PROJECTOR_TYPE_GEMMA3:
+        case PROJECTOR_TYPE_GEMMA4V:
+        case PROJECTOR_TYPE_GEMMA4UV:
+        case PROJECTOR_TYPE_IDEFICS3:
+        case PROJECTOR_TYPE_INTERNVL:
+        case PROJECTOR_TYPE_NEMOTRON_V2_VL:
+        case PROJECTOR_TYPE_LLAMA4:
+            return (img->nx() / params.patch_size) / (params.n_merge > 0 ? params.n_merge : 1);
         case PROJECTOR_TYPE_DEEPSEEKOCR:
         case PROJECTOR_TYPE_DEEPSEEKOCR2:
             return (img->nx() / params.patch_size) / 4;
@@ -3957,7 +3964,14 @@ int clip_n_output_tokens_y(const clip_ctx * ctx, const clip_image_f32 * img) {
         case PROJECTOR_TYPE_MUSE_GLIMMER:
             return (img->ny() / params.patch_size) / 2;
         case PROJECTOR_TYPE_STEP3VL:
-            return img->ny() / (params.patch_size * params.n_merge);
+        case PROJECTOR_TYPE_GEMMA3:
+        case PROJECTOR_TYPE_GEMMA4V:
+        case PROJECTOR_TYPE_GEMMA4UV:
+        case PROJECTOR_TYPE_IDEFICS3:
+        case PROJECTOR_TYPE_INTERNVL:
+        case PROJECTOR_TYPE_NEMOTRON_V2_VL:
+        case PROJECTOR_TYPE_LLAMA4:
+            return (img->ny() / params.patch_size) / (params.n_merge > 0 ? params.n_merge : 1);
         default:
             break;
     }
@@ -4055,8 +4069,10 @@ int clip_n_output_tokens(const clip_ctx * ctx, const clip_image_f32 * img) {
         case PROJECTOR_TYPE_LLAMA4:
             {
                 // both X and Y are downscaled by the scale factor
-                int scale_factor = ctx->model.hparams.n_merge;
-                n_patches /= (scale_factor * scale_factor);
+                int scale_factor = ctx->model.hparams.n_merge > 0 ? ctx->model.hparams.n_merge : 1;
+                int x_patch = (img->nx() / params.patch_size) / scale_factor;
+                int y_patch = (img->ny() / params.patch_size) / scale_factor;
+                n_patches = x_patch * y_patch;
             } break;
         case PROJECTOR_TYPE_GEMMA3NV:
             {
