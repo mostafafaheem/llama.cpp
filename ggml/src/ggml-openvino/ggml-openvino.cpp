@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <openvino/core/type/element_type.hpp>
@@ -1471,8 +1472,8 @@ static bool ggml_backend_openvino_device_supports_op(ggml_backend_dev_t dev, con
     if (!res.is_supported) {
         static const bool log_unsupported = ggml_openvino_getenv_int("GGML_OPENVINO_LOG_UNSUPPORTED_OPS") != 0;
         if (log_unsupported) {
-            GGML_LOG_WARN("OpenVINO op unsupported: op '%s' (%s), type %s: %s\n",
-                          op->name, ggml_op_name(op->op), ggml_type_name(op->type), res.reason.c_str());
+            std::cout << "OpenVINO op unsupported: op '" << op->name << "' (" << ggml_op_name(op->op)
+                      << "), type " << ggml_type_name(op->type) << ": " << res.reason << "\n";
         }
     }
     return res.is_supported;
