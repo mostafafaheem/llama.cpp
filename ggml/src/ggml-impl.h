@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-void ggml_print_backtrace(void);
+GGML_API void ggml_print_backtrace(void);
 
 uint64_t ggml_graph_next_uid(void);
 

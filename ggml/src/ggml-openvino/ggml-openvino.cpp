@@ -909,20 +909,32 @@ static bool has_non_contiguous_view_input(const ggml_tensor * op) {
 
 static bool is_supported_flash_attn_pattern(const ggml_tensor * op) {
     // Each Q/K/V input must follow one of:
-    //   PERMUTE -> VIEW  -> base (view_src==nullptr)   (llama KV-cache path)
-    //   PERMUTE -> RESHAPE -> base (view_src==nullptr)  (whisper Q)
-    //   VIEW -> base (view_src==nullptr)                (whisper K/V from kv_pad)
+    //   (CPY ->) PERMUTE -> VIEW / RESHAPE / CONCAT / RMS_NORM  (llama, whisper, gemma4v)
+    //   (CPY ->) VIEW -> base                                  (whisper K/V from kv_pad)
     for (int i = 0; i < 3; i++) {
         const ggml_tensor * src = op->src[i];
+        if (src == nullptr) {
+            return false;
+        }
+        if (src->op == GGML_OP_CPY) {
+            src = src->src[0];
+            if (src == nullptr) {
+                return false;
+            }
+        }
         if (src->op == GGML_OP_PERMUTE) {
             if (src->src[0] == nullptr) {
                 return false;
             }
-            if (src->src[0]->op != GGML_OP_VIEW && src->src[0]->op != GGML_OP_RESHAPE) {
+            const enum ggml_op inner_op = src->src[0]->op;
+            if (inner_op != GGML_OP_VIEW && inner_op != GGML_OP_RESHAPE && inner_op != GGML_OP_CONCAT &&
+                inner_op != GGML_OP_RMS_NORM) {
                 return false;
             }
-            if (src->src[0]->src[0] == nullptr || src->src[0]->src[0]->view_src != nullptr) {
-                return false;
+            if (inner_op == GGML_OP_VIEW || inner_op == GGML_OP_RESHAPE) {
+                if (src->src[0]->src[0] == nullptr || src->src[0]->src[0]->view_src != nullptr) {
+                    return false;
+                }
             }
         } else if (src->op == GGML_OP_VIEW) {
             if (src->src[0] == nullptr || src->src[0]->view_src != nullptr) {
@@ -1147,15 +1159,15 @@ static ggml_openvino_op_support is_op_supported_case(const ggml_tensor * op) {
         break;
     }
     case GGML_OP_POOL_2D: {
-        const auto& name = ggml_openvino_get_device_name();
-        if (name == "GPU" || name == "NPU") {
+        const auto & name = ggml_openvino_get_device_name();
+        if (name == "GPU") {
             const int32_t * params = op->op_params;
             const int k0 = params[1];
             const int k1 = params[2];
             const int p0 = params[5];
             const int p1 = params[6];
             if ((p0 > 0 || p1 > 0) && (k0 < 3 || k1 < 3)) {
-                return true;
+                return {false, "POOL_2D with padding and kernel size < 3 is not supported on GPU"};
             }
         }
         break;
