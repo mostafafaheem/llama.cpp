@@ -20,6 +20,7 @@
 #include <random>
 #include <stdexcept>
 #include <unordered_set>
+#include <set>
 #include <vector>
 #include <cinttypes>
 #include <limits>
@@ -167,6 +168,9 @@ struct clip_ctx {
 
     bool debug_output_embeddings = false;
 
+    ggml_backend_sched_eval_callback cb_eval = nullptr;
+    void * cb_eval_user_data = nullptr;
+
     // for measuring memory usage
     bool no_alloc = false;
     std::map<ggml_backend_dev_t, size_t> mem_usage;
@@ -222,8 +226,10 @@ struct clip_ctx {
             ggml_backend_sched_new(backend_ptrs.data(), backend_buft.data(), backend_ptrs.size(), 8192, false, true)
         );
 
-        if (ctx_params.cb_eval != nullptr) {
-            ggml_backend_sched_set_eval_callback(sched.get(), ctx_params.cb_eval, ctx_params.cb_eval_user_data);
+        cb_eval = ctx_params.cb_eval;
+        cb_eval_user_data = ctx_params.cb_eval_user_data;
+        if (cb_eval != nullptr) {
+            ggml_backend_sched_set_eval_callback(sched.get(), cb_eval, cb_eval_user_data);
         }
 
         debug_output_embeddings = std::getenv("MTMD_DEBUG_EMBEDDINGS") != nullptr;
@@ -4300,6 +4306,86 @@ static std::vector<c2w_state_slot> list_gen_state_slots(const clip_hparams & hpa
     }
 }
 
+// print tensor stats across backends for debugging
+static void gemma4v_print_tensor_stats(const struct ggml_tensor * t, const char * name) {
+    if (t == nullptr) {
+        return;
+    }
+
+    int64_t size = ggml_nelements(t);
+    if (size == 0) {
+        return;
+    }
+
+    std::vector<uint8_t> host_buf;
+    const void * data_ptr = nullptr;
+
+    if (t->buffer && !ggml_backend_buffer_is_host(t->buffer)) {
+        host_buf.resize(ggml_nbytes(t));
+        ggml_backend_tensor_get(t, host_buf.data(), 0, ggml_nbytes(t));
+        data_ptr = host_buf.data();
+    } else if (t->data != nullptr) {
+        data_ptr = t->data;
+    } else if (t->buffer) {
+        host_buf.resize(ggml_nbytes(t));
+        ggml_backend_tensor_get(t, host_buf.data(), 0, ggml_nbytes(t));
+        data_ptr = host_buf.data();
+    }
+
+    if (data_ptr == nullptr) {
+        return;
+    }
+
+    auto get_value = [&](int64_t i) -> float {
+        if (t->type == GGML_TYPE_F32) {
+            return ((const float *)data_ptr)[i];
+        } else if (t->type == GGML_TYPE_F16) {
+            return ggml_fp16_to_fp32(((const ggml_fp16_t *)data_ptr)[i]);
+        } else if (t->type == GGML_TYPE_BF16) {
+            return ggml_bf16_to_fp32(((const ggml_bf16_t *)data_ptr)[i]);
+        } else if (t->type == GGML_TYPE_I32) {
+            return (float)(((const int32_t *)data_ptr)[i]);
+        } else if (t->type == GGML_TYPE_I16) {
+            return (float)(((const int16_t *)data_ptr)[i]);
+        } else if (t->type == GGML_TYPE_I8) {
+            return (float)(((const int8_t *)data_ptr)[i]);
+        }
+        return 0.0f;
+    };
+
+    if (t->type == GGML_TYPE_F32 || t->type == GGML_TYPE_F16 || t->type == GGML_TYPE_BF16 ||
+        t->type == GGML_TYPE_I32 || t->type == GGML_TYPE_I16 || t->type == GGML_TYPE_I8) {
+        float first = get_value(0);
+        float min_val = first;
+        float max_val = first;
+        double sum = first;
+
+        for (int64_t i = 1; i < size; ++i) {
+            float v = get_value(i);
+            if (v < min_val) min_val = v;
+            if (v > max_val) max_val = v;
+            sum += v;
+        }
+        double mean = sum / size;
+
+        char second_str[16];
+        if (size > 1) {
+            snprintf(second_str, sizeof(second_str), "%12.6f", get_value(1));
+        } else {
+            snprintf(second_str, sizeof(second_str), "%12s", "N/A");
+        }
+        float last = get_value(size - 1);
+
+        const char * tname = (name && strlen(name) > 0) ? name : (t->name[0] ? t->name : "unnamed");
+
+        const char * tag = getenv("WHISPER_DEBUG_TENSORS") ? "[WHISPER-TENSOR-DBG]" : "[GEMMA4V-TENSOR-DBG]";
+
+        fprintf(stderr, "%s Name: %-30s | Shape: [%4d,%4d,%4d,%4d] | Type: %s | First: %12.6f | Second: %s | Last: %12.6f | Min: %12.6f | Max: %12.6f | Mean: %12.6f\n",
+                tag, tname, (int)t->ne[0], (int)t->ne[1], (int)t->ne[2], (int)t->ne[3],
+                ggml_type_name(t->type), first, second_str, last, min_val, max_val, mean);
+    }
+}
+
 bool clip_encode(struct clip_ctx * ctx, struct clip_encode_params * params) {
     const clip_image_f32_batch & imgs = *params->imgs;
     int n_batch_cur = imgs.entries.size();
@@ -5570,7 +5656,87 @@ bool clip_encode(struct clip_ctx * ctx, struct clip_encode_params * params) {
         }
     }
 
+    const char * env_dbg = getenv("WHISPER_DEBUG_TENSORS");
+    if (!env_dbg) {
+        env_dbg = getenv("GEMMA4V_DEBUG_TENSORS");
+    }
+    if (!env_dbg) {
+        env_dbg = getenv("MTMD_DEBUG_TENSORS");
+    }
+
+    auto should_print = [&](const char * name) -> bool {
+        if (!name || strlen(name) == 0) return false;
+        if (!env_dbg || strlen(env_dbg) == 0) return false;
+        if (strcmp(env_dbg, "1") == 0 || strcmp(env_dbg, "all") == 0) return true;
+        std::string s_filter(env_dbg);
+        std::string s_name(name);
+        size_t pos = 0;
+        while (true) {
+            size_t next_pos = s_filter.find(',', pos);
+            std::string part = s_filter.substr(pos, next_pos - pos);
+            if (!part.empty() && s_name.find(part) != std::string::npos) {
+                return true;
+            }
+            if (next_pos == std::string::npos) break;
+            pos = next_pos + 1;
+        }
+        return false;
+    };
+
+    struct debug_eval_state {
+        std::function<bool(const char *)> should_print;
+        std::set<const struct ggml_tensor *> printed;
+    } dbg_state;
+    dbg_state.should_print = should_print;
+
+    auto dbg_eval_cb = [](struct ggml_tensor * t, bool ask, void * user_data) -> bool {
+        auto * state = (debug_eval_state *) user_data;
+        if (!t) return true;
+        if (ask) {
+            return state->should_print(t->name);
+        }
+        if (state->should_print(t->name)) {
+            gemma4v_print_tensor_stats(t, t->name);
+            state->printed.insert(t);
+        }
+        return true;
+    };
+
+    if (env_dbg && strlen(env_dbg) > 0) {
+        int n_nodes = ggml_graph_n_nodes(gf);
+        for (int i = 0; i < n_nodes; ++i) {
+            struct ggml_tensor * t = ggml_graph_node(gf, i);
+            if (t) {
+                for (int j = 0; j < GGML_MAX_SRC; ++j) {
+                    struct ggml_tensor * src = t->src[j];
+                    if (src && dbg_state.printed.find(src) == dbg_state.printed.end() && should_print(src->name)) {
+                        gemma4v_print_tensor_stats(src, src->name);
+                        dbg_state.printed.insert(src);
+                    }
+                }
+            }
+        }
+
+        if (ctx->cb_eval == nullptr) {
+            ggml_backend_sched_set_eval_callback(ctx->sched.get(), dbg_eval_cb, &dbg_state);
+        }
+    }
+
     auto status = ggml_backend_sched_graph_compute(ctx->sched.get(), gf);
+
+    if (env_dbg && strlen(env_dbg) > 0) {
+        int n_nodes = ggml_graph_n_nodes(gf);
+        for (int i = 0; i < n_nodes; ++i) {
+            struct ggml_tensor * node = ggml_graph_node(gf, i);
+            if (node && dbg_state.printed.find(node) == dbg_state.printed.end() && should_print(node->name)) {
+                gemma4v_print_tensor_stats(node, node->name);
+                dbg_state.printed.insert(node);
+            }
+        }
+        if (ctx->cb_eval == nullptr) {
+            ggml_backend_sched_set_eval_callback(ctx->sched.get(), nullptr, nullptr);
+        }
+    }
     if (status != GGML_STATUS_SUCCESS) {
         LOG_ERR("%s: ggml_backend_sched_graph_compute failed with error %d\n", __func__, status);
         return false;

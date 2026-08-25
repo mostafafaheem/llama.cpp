@@ -36,6 +36,8 @@ ggml_cgraph * clip_graph_gemma4v::build() {
         // ggml_get_rows: [n_embd, n_patches]
         ggml_tensor * emb_x = ggml_get_rows(ctx0, tbl_x, pos_x);
         ggml_tensor * emb_y = ggml_get_rows(ctx0, tbl_y, pos_y);
+        cb(emb_x, "emb_x", -1);
+        cb(emb_y, "emb_y", -1);
 
         inp = ggml_add(ctx0, inp, emb_x);
         inp = ggml_add(ctx0, inp, emb_y);
@@ -129,6 +131,7 @@ ggml_cgraph * clip_graph_gemma4v::build() {
     {
         // embedding_pre_projection_norm
         cur = ggml_rms_norm(ctx0, cur, hparams.eps);
+        cb(cur, "pre_projected_norm", -1);
         cur = build_mm(model.mm_input_proj_w, cur);
         cb(cur, "projected", -1);
     }
@@ -146,8 +149,10 @@ ggml_tensor * clip_graph_gemma4v::build_mm(ggml_tensor * w, ggml_tensor * x) con
     } else {
         const auto & clamp_info = it->second;
         ggml_tensor * clamped = ggml_clamp(ctx0, x, clamp_info.inp_min, clamp_info.inp_max);
+        cb(clamped, "mm_clamped_inp", -1);
         ggml_tensor * out = ggml_mul_mat(ctx0, w, clamped);
         out = ggml_clamp(ctx0, out, clamp_info.out_min, clamp_info.out_max);
+        cb(out, "mm_clamped_out", -1);
         return out;
     }
 }

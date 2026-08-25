@@ -47,6 +47,8 @@ ggml_cgraph * clip_graph_gemma4uv::build() {
         // ggml_get_rows: [n_embd, n_patches]
         ggml_tensor * emb_x = ggml_get_rows(ctx0, tbl_x, pos_x);
         ggml_tensor * emb_y = ggml_get_rows(ctx0, tbl_y, pos_y);
+        cb(emb_x, "emb_x", -1);
+        cb(emb_y, "emb_y", -1);
 
         inp = ggml_add(ctx0, inp, emb_x);
         inp = ggml_add(ctx0, inp, emb_y);
@@ -54,14 +56,16 @@ ggml_cgraph * clip_graph_gemma4uv::build() {
 
         // pos_norm
         inp = build_norm(inp, model.patch_norm_3_w, model.patch_norm_3_b, NORM_TYPE_NORMAL, eps, -1);
+        cb(inp, "pos_normed", -1);
     }
 
-    auto cur = inp;
+    auto * cur = inp;
 
     // Gemma4UnifiedMultimodalEmbedder
     {
         // embedding_pre_projection_norm
         cur = ggml_rms_norm(ctx0, cur, hparams.eps);
+        cb(cur, "pre_projected_norm", -1);
         cur = build_mm(model.mm_input_proj_w, cur);
         cb(cur, "projected", -1);
     }
