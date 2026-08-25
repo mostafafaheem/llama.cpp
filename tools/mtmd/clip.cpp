@@ -4320,16 +4320,12 @@ static void gemma4v_print_tensor_stats(const struct ggml_tensor * t, const char 
     std::vector<uint8_t> host_buf;
     const void * data_ptr = nullptr;
 
-    if (t->buffer && !ggml_backend_buffer_is_host(t->buffer)) {
+    if (t->buffer != nullptr) {
         host_buf.resize(ggml_nbytes(t));
         ggml_backend_tensor_get(t, host_buf.data(), 0, ggml_nbytes(t));
         data_ptr = host_buf.data();
     } else if (t->data != nullptr) {
         data_ptr = t->data;
-    } else if (t->buffer) {
-        host_buf.resize(ggml_nbytes(t));
-        ggml_backend_tensor_get(t, host_buf.data(), 0, ggml_nbytes(t));
-        data_ptr = host_buf.data();
     }
 
     if (data_ptr == nullptr) {
@@ -5685,7 +5681,7 @@ bool clip_encode(struct clip_ctx * ctx, struct clip_encode_params * params) {
 
     struct debug_eval_state {
         std::function<bool(const char *)> should_print;
-        std::set<const struct ggml_tensor *> printed;
+        std::set<const struct ggml_tensor *> printed_nodes;
     } dbg_state;
     dbg_state.should_print = should_print;
 
@@ -5697,21 +5693,24 @@ bool clip_encode(struct clip_ctx * ctx, struct clip_encode_params * params) {
         }
         if (state->should_print(t->name)) {
             gemma4v_print_tensor_stats(t, t->name);
-            state->printed.insert(t);
+            state->printed_nodes.insert(t);
         }
         return true;
     };
 
     if (env_dbg && strlen(env_dbg) > 0) {
+        std::set<const struct ggml_tensor *> printed_leafs;
         int n_nodes = ggml_graph_n_nodes(gf);
         for (int i = 0; i < n_nodes; ++i) {
             struct ggml_tensor * t = ggml_graph_node(gf, i);
             if (t) {
                 for (int j = 0; j < GGML_MAX_SRC; ++j) {
                     struct ggml_tensor * src = t->src[j];
-                    if (src && dbg_state.printed.find(src) == dbg_state.printed.end() && should_print(src->name)) {
-                        gemma4v_print_tensor_stats(src, src->name);
-                        dbg_state.printed.insert(src);
+                    if (src && printed_leafs.find(src) == printed_leafs.end() && should_print(src->name)) {
+                        if (src->op == GGML_OP_NONE || (src->flags & GGML_TENSOR_FLAG_INPUT)) {
+                            gemma4v_print_tensor_stats(src, src->name);
+                            printed_leafs.insert(src);
+                        }
                     }
                 }
             }
@@ -5728,9 +5727,9 @@ bool clip_encode(struct clip_ctx * ctx, struct clip_encode_params * params) {
         int n_nodes = ggml_graph_n_nodes(gf);
         for (int i = 0; i < n_nodes; ++i) {
             struct ggml_tensor * node = ggml_graph_node(gf, i);
-            if (node && dbg_state.printed.find(node) == dbg_state.printed.end() && should_print(node->name)) {
+            if (node && dbg_state.printed_nodes.find(node) == dbg_state.printed_nodes.end() && should_print(node->name)) {
                 gemma4v_print_tensor_stats(node, node->name);
-                dbg_state.printed.insert(node);
+                dbg_state.printed_nodes.insert(node);
             }
         }
         if (ctx->cb_eval == nullptr) {
