@@ -337,6 +337,8 @@ public:
 
     virtual bool is_static() const override { return m_is_static; }
 
+    bool is_mmproj() const;
+
     virtual bool is_stateful() const override { return m_is_stateful; }
 
     virtual bool is_prefill() const override { return m_is_prefill; }
@@ -468,7 +470,8 @@ public:
     }
 
     static bool is_inp_pos(const ggml_tensor * tensor, const ggml_tensor * op) {
-        return op->op == GGML_OP_ROPE && tensor == op->src[1];
+        return op != nullptr && op->op == GGML_OP_ROPE && tensor == op->src[1] &&
+               (tensor->name[0] == '\0' || strcmp(tensor->name, "inp_pos") == 0);
     }
 
     // IMROPE and VISION pack 4 stacked position planes (t/h/w/e) into inp_pos, each of length

@@ -142,24 +142,36 @@ OutputVector translate_flash_attn_ext(const NodeContext & context) {
     // float max_bias      = params[1];
     const float logit_softcap = params[2];
 
-    auto q = std::make_shared<ov::op::v0::Convert>(q_f32, ov::element::f16);
-    auto scale_node = std::make_shared<ov::op::v0::Constant>(ov::element::f16, ov::Shape{}, std::vector<float>{scale});
+    const int32_t * op_params_i32 = context.get_output_op_params();
+    const bool is_f32_acc = op_params_i32 != nullptr && (op_params_i32[3] == GGML_PREC_F32 ||
+        (q_f32.get_element_type() == ov::element::f32 && k.get_element_type() == ov::element::f32));
+    const auto attn_type = is_f32_acc ? ov::element::f32 : ov::element::f16;
+
+    ov::Output<ov::Node> q = q_f32.get_element_type() == attn_type ?
+        q_f32 : std::make_shared<ov::op::v0::Convert>(q_f32, attn_type);
+    if (k.get_element_type() != attn_type) {
+        k = std::make_shared<ov::op::v0::Convert>(k, attn_type);
+    }
+    if (v.get_element_type() != attn_type) {
+        v = std::make_shared<ov::op::v0::Convert>(v, attn_type);
+    }
+    auto scale_node = std::make_shared<ov::op::v0::Constant>(attn_type, ov::Shape{}, std::vector<float>{scale});
 
     ov::Output<ov::Node> res;
 
     ov::Output<ov::Node> mask;
     if (has_mask) {
         mask = get_kq_mask_input(context, 3);
-        if (mask.get_element_type() != ov::element::f16) {
-            mask = std::make_shared<ov::op::v0::Convert>(mask, ov::element::f16);
+        if (mask.get_element_type() != attn_type) {
+            mask = std::make_shared<ov::op::v0::Convert>(mask, attn_type);
         }
     }
 
     ov::Output<ov::Node> sink;
     if (has_sink) {
         sink = context.get_input(4);
-        if (sink.get_element_type() != q->get_element_type()) {
-            sink = std::make_shared<ov::op::v0::Convert>(sink, q->get_element_type());
+        if (sink.get_element_type() != q.get_element_type()) {
+            sink = std::make_shared<ov::op::v0::Convert>(sink, q.get_element_type());
         }
         sink = std::make_shared<ov::op::v1::Reshape>(
             sink,
@@ -227,10 +239,10 @@ OutputVector translate_flash_attn_ext(const NodeContext & context) {
             // as ggml: softcap * tanh(qk * scale / softcap)
             probs = std::make_shared<ov::op::v1::Multiply>(
                 qk,
-                ov::op::v0::Constant::create(ov::element::f16, ov::Shape{}, std::vector<float>{scale / logit_softcap}));
+                ov::op::v0::Constant::create(attn_type, ov::Shape{}, std::vector<float>{scale / logit_softcap}));
             probs = std::make_shared<ov::op::v1::Multiply>(
                 std::make_shared<ov::op::v0::Tanh>(probs),
-                ov::op::v0::Constant::create(ov::element::f16, ov::Shape{}, std::vector<float>{logit_softcap}));
+                ov::op::v0::Constant::create(attn_type, ov::Shape{}, std::vector<float>{logit_softcap}));
         } else {
             probs = std::make_shared<ov::op::v1::Multiply>(qk, scale_node);
         }
@@ -244,7 +256,7 @@ OutputVector translate_flash_attn_ext(const NodeContext & context) {
             // The GPU plugin fuses this attention into its SDPA kernel, which works on blocks of keys: a block
             // fully masked with -inf for a row gives NaN (see the SDPA path below), so use a large finite value.
             auto mask_finite = std::make_shared<ov::op::v1::Maximum>(
-                mask, ov::op::v0::Constant::create(ov::element::f16, ov::Shape{}, std::vector<float>{-30000.0f}));
+                mask, ov::op::v0::Constant::create(attn_type, ov::Shape{}, std::vector<float>{-30000.0f}));
             auto mask_tiled = std::make_shared<ov::op::v0::Tile>(
                 mask_finite,
                 ov::op::v0::Constant::create(ov::element::i64, {4}, std::vector<int64_t>{1, 1, factor, 1}));
@@ -260,11 +272,14 @@ OutputVector translate_flash_attn_ext(const NodeContext & context) {
             ov::op::v0::Constant::create(ov::element::i64, {4}, std::vector<int64_t>{0, num_heads, -1, head_size});
         auto out_4d = std::make_shared<ov::op::v1::Reshape>(attn, out_4d_shape, true);
 
-        // The standard SDPA path's downstream is Transpose(0,2,1,3) → Convert(f32).
+        // The standard SDPA path's downstream is Transpose(0,2,1,3) -> Convert(f32).
         // Replicate it here so callers see the same output layout/dtype.
         res = std::make_shared<ov::op::v1::Transpose>(
             out_4d, ov::op::v0::Constant::create(ov::element::i64, {4}, {0, 2, 1, 3}));
-        res = std::make_shared<ov::op::v0::Convert>(res, ov::element::f32);
+        const auto output_type = context.get_output_type();
+        if (res.get_element_type() != output_type) {
+            res = std::make_shared<ov::op::v0::Convert>(res, output_type);
+        }
         return rename_outputs_with_suffix({res}, context.get_name());
     }
 
@@ -384,7 +399,10 @@ OutputVector translate_flash_attn_ext(const NodeContext & context) {
         auto attended = std::make_shared<ov::op::v0::MatMul>(probs, v, false, v_transposed);
         res = std::make_shared<ov::op::v1::Transpose>(
             attended, ov::op::v0::Constant::create(ov::element::i64, {4}, {0, 2, 1, 3}));
-        res = std::make_shared<ov::op::v0::Convert>(res, ov::element::f32);
+        const auto output_type = context.get_output_type();
+        if (res.get_element_type() != output_type) {
+            res = std::make_shared<ov::op::v0::Convert>(res, output_type);
+        }
         return rename_outputs_with_suffix({res}, context.get_name());
     }
 
@@ -393,7 +411,7 @@ OutputVector translate_flash_attn_ext(const NodeContext & context) {
     // which spreads to the row's result, so mask with a large finite value instead
     if (has_mask && ggml_openvino_is_gpu() && !context.is_stateful() && ggml_openvino_shape_from_mask_enabled()) {
         mask = std::make_shared<ov::op::v1::Maximum>(
-            mask, ov::op::v0::Constant::create(ov::element::f16, ov::Shape{}, std::vector<float>{-30000.0f}));
+            mask, ov::op::v0::Constant::create(attn_type, ov::Shape{}, std::vector<float>{-30000.0f}));
     }
 
     constexpr auto causal = false;
@@ -410,7 +428,10 @@ OutputVector translate_flash_attn_ext(const NodeContext & context) {
         res = std::make_shared<ov::op::v1::Transpose>(
             sdpa, ov::op::v0::Constant::create(ov::element::i64, {4}, {0, 2, 1, 3}));
     }
-    res = std::make_shared<ov::op::v0::Convert>(res, ov::element::f32);
+    const auto output_type = context.get_output_type();
+    if (res.get_element_type() != output_type) {
+        res = std::make_shared<ov::op::v0::Convert>(res, output_type);
+    }
     return rename_outputs_with_suffix({res}, context.get_name());
 }
 

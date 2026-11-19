@@ -255,8 +255,8 @@ bool is_mmproj_flash_attn_pattern(const ggml_tensor * node) {
     }
 
     auto unwrap_cast = [](const ggml_tensor * t) -> const ggml_tensor * {
-        if (t != nullptr && t->op == GGML_OP_CPY && t->src[0] != nullptr) {
-            return t->src[0];
+        while (t != nullptr && t->op == GGML_OP_CPY && t->src[0] != nullptr) {
+            t = t->src[0];
         }
         return t;
     };
@@ -303,6 +303,21 @@ bool is_mmproj_flash_attn_pattern(const ggml_tensor * node) {
     }
 
     return true;
+}
+
+bool GgmlOvDecoder::is_mmproj() const {
+    if (m_model_params.n_heads_kv != -1 || m_model_params.is_cacheless_attn || m_model_params.state_size >= 0) {
+        return false;
+    }
+    if (m_cgraph != nullptr) {
+        for (int i = 0; i < m_cgraph->n_nodes; i++) {
+            const auto * n = m_cgraph->nodes[i];
+            if (is_mmproj_flash_attn_pattern(n) || n->op == GGML_OP_POOL_2D || n->op == GGML_OP_CONV_2D) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 std::string GgmlOvDecoder::get_tensor_name(const ggml_cgraph * cgraph, const ggml_tensor * tensor) {
@@ -466,7 +481,7 @@ int GgmlOvDecoder::compute_op_case(const ggml_tensor * node) const {
     int op_case = 0;
     switch (node->op) {
     case GGML_OP_RESHAPE: {
-        if (m_naive) {
+        if (m_naive || is_mmproj()) {
             break;
         }
         auto name = std::string(node->name);
@@ -1518,7 +1533,7 @@ bool GgmlOvDecoder::has_inp_embd_leaf_use(const ggml_tensor * tensor) const {
 ov::PartialShape GgmlOvDecoder::get_graph_input_shape(const ggml_tensor * op,
                                                       const ggml_tensor * input,
                                                       int dynamic_dim_index) const {
-    if (m_naive) {
+    if (m_naive || is_mmproj()) {
         return input != nullptr ? ov::PartialShape{get_shape(input)} : ov::PartialShape{get_shape(op)};
     }
     const std::string name = input != nullptr ? std::string(input->name) : std::string();
@@ -2898,6 +2913,13 @@ const std::string & GgmlOvDecoder::get_op_type() const {
 }
 
 void GgmlOvDecoder::compute_node_dynamic_dims() {
+    if (is_mmproj()) {
+        for (int i = 0; i < m_cgraph->n_nodes; i++) {
+            m_node_dynamic_dims[m_cgraph->nodes[i]] = -1;
+        }
+        return;
+    }
+
     auto visit_node = [&](auto && self, ggml_tensor * node) -> void {
         if (!node) {
             return;
