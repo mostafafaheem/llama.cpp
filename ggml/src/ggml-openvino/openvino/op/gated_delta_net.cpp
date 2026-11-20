@@ -521,8 +521,8 @@ static OutputVector translate_gdn(const NodeContext & context, const OutputVecto
         auto fused = std::make_shared<ov::op::internal::RecurrentGatedDeltaNetUpdate>(
             args, fuse_qk_l2norm, q_eps, k_eps, snapshot_count);
         fused->set_friendly_name(context.get_name() + "/RecurrentGatedDeltaNetUpdate");
-        // The matched state VIEW is consumed only by the overridden full-cache
-        // writeback. Route that cache directly instead of materializing snapshots.
+        // The native output is attention. GGML's matched state VIEW aliases the
+        // writable cache input used by the overridden full-cache writeback.
         if (context.get_output_names().size() == 3) {
             return {fused->output(0), fused->output(0), (*cache_inputs)[0]};
         }

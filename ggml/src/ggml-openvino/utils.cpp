@@ -216,7 +216,7 @@ static size_t get_static_attention_size(const std::shared_ptr<GgmlOvDecoder> & g
 static uint64_t ggml_openvino_model_cache_extra_cfg(bool stateful, bool recurrent) {
     const bool manual_gqa_enabled = ggml_openvino_manual_gqa_enabled();
 
-    uint64_t extra_cfg = 15;  // Recurrent caches are writable inputs without cache Results.
+    uint64_t extra_cfg = 19;  // Recurrent sequence views and independent spatial attention inputs.
 #ifdef GGML_OPENVINO_HAS_CACHE_UPDATE
     extra_cfg = extra_cfg * 131 + (ggml_openvino_getenv_int("GGML_OPENVINO_DISABLE_FUSED_RECURRENCE") ? 0u : 1u);
 #else
@@ -311,9 +311,11 @@ static std::string compiled_graph_key(const ggml_cgraph * graph,
     for (const auto & input : decoder.get_model_extra_inputs()) {
         append_string(input.first);
         append_string(input.second.type.get_type_name());
-        append(input.second.shape.size());
-        for (auto dim : input.second.shape) {
-            append(dim);
+        if (input.second.parameter_shape.rank().is_static()) {
+            append_string(input.second.parameter_shape.to_string());
+        } else {
+            append(input.second.shape.size());
+            for (auto dim : input.second.shape) { append(dim); }
         }
         append(input.second.is_parameter);
         if (!input.second.is_parameter) {
@@ -338,7 +340,7 @@ static std::string dynamic_graph_signature(const ggml_cgraph * graph,
         append(value.size());
         key.append(value);
     };
-    graph_key graph_id(graph, true);
+    graph_key graph_id(graph, true, params.is_dynamic_vision);
     append(graph_id.n_nodes);
     append(graph_id.n_leaves);
     append_string(graph_id.first_node_name);
@@ -368,9 +370,11 @@ static std::string dynamic_graph_signature(const ggml_cgraph * graph,
     for (const auto & [name, input] : decoder.get_model_extra_inputs()) {
         append_string(name);
         append_string(input.type.get_type_name());
-        append(input.shape.size());
-        for (auto dim : input.shape) {
-            append(dim);
+        if (input.parameter_shape.rank().is_static()) {
+            append_string(input.parameter_shape.to_string());
+        } else {
+            append(input.shape.size());
+            for (auto dim : input.shape) { append(dim); }
         }
         append(input.is_parameter);
         if (!input.is_parameter) {
@@ -761,7 +765,13 @@ ov::Tensor get_ov_input_tensor(const std::shared_ptr<GgmlOvDecoder> & ggml_decod
             }
         }
         input_tensor = cached;
-        if (param_name == "sampling_rows") {
+        if (param_name.compare(0, 13, "vision_shape_") == 0 || param_name.compare(0, 12, "vision_size_") == 0) {
+            const auto & values = ggml_decoder->get_compute_params().vision_shapes.at(param_name);
+            std::copy(values.begin(), values.end(), input_tensor.data<int64_t>());
+        } else if (param_name.compare(0, 9, "vision_y_") == 0 || param_name.compare(0, 9, "vision_x_") == 0) {
+            const auto & values = ggml_decoder->get_compute_params().vision_projections.at(param_name);
+            std::copy(values.begin(), values.end(), input_tensor.data<float>());
+        } else if (param_name == "sampling_rows") {
             auto * data = input_tensor.data<int64_t>();
             for (const auto & row : ggml_decoder->get_compute_params().sampling_rows) {
                 *data++ = row.second;
@@ -1252,7 +1262,8 @@ enum ggml_status ov_graph_compute_dynamic(ggml_cgraph * cgraph, const std::share
     // graph_key first (a few hundred us), and if the same key is already in decoder_cache
     // we know the graph is not splitted (only not-splitted graphs get inserted there).
     const int64_t cache_key_start_time = ggml_time_us();
-    graph_key key(cgraph);
+    const bool dynamic_vision = GgmlOvDecoder::is_dynamic_vision_graph(cgraph);
+    graph_key key(cgraph, false, dynamic_vision);
     const int64_t cache_key_compute_time = ggml_time_us() - cache_key_start_time;
     int64_t cache_lookup_time = 0;
     bool key_seen = false;
@@ -1282,7 +1293,7 @@ enum ggml_status ov_graph_compute_dynamic(ggml_cgraph * cgraph, const std::share
     ModelParams m_params;
     ComputeParams c_params;
     const int64_t graph_param_compute_start_time = ggml_time_us();
-    std::tie(m_params, c_params) = GgmlOvDecoder::compute_llm_params(cgraph, is_static);
+    std::tie(m_params, c_params) = GgmlOvDecoder::compute_llm_params(cgraph, is_static, dynamic_vision);
     const int64_t graph_param_compute_time = ggml_time_us() - graph_param_compute_start_time;
 
     const bool cache_enabled = !model_is_splitted && !cache_disabled;
