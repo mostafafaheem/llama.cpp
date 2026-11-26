@@ -38,7 +38,8 @@ struct graph_key {
     std::vector<size_t> weight_buffer_ids;
 
     graph_key(const ggml_cgraph * cgraph, bool include_inputs = false, bool dynamic_vision = false) :
-        n_nodes(cgraph->n_nodes), n_leaves(cgraph->n_leafs) {
+        n_nodes(cgraph->n_nodes),
+        n_leaves(cgraph->n_leafs) {
         if (n_nodes > 0) {
             first_node_name = cgraph->nodes[0]->name;
             last_node_name = cgraph->nodes[n_nodes - 1]->name;
@@ -78,8 +79,9 @@ struct graph_key {
             }
             // Qualified vision graphs reuse a fixed model configuration; only spatial sizes vary.
             // Static or unqualified image graphs keep their full input shape in the key.
-            if (!dynamic_vision && (node->op == GGML_OP_CONV_2D || node->op == GGML_OP_CONV_2D_DW ||
-                 node->op == GGML_OP_IM2COL) && node->src[1] != nullptr) {
+            if (!dynamic_vision &&
+                (node->op == GGML_OP_CONV_2D || node->op == GGML_OP_CONV_2D_DW || node->op == GGML_OP_IM2COL) &&
+                node->src[1] != nullptr) {
                 const auto * input = node->src[1];
                 const auto * root = input->view_src ? input->view_src : input;
                 // Gemma4 normalizes image pixels with SCALE before patch extraction.
@@ -121,8 +123,7 @@ struct graph_key {
     }
 
     bool operator==(const graph_key & other) const {
-        return n_nodes == other.n_nodes && n_leaves == other.n_leaves &&
-               first_node_name == other.first_node_name &&
+        return n_nodes == other.n_nodes && n_leaves == other.n_leaves && first_node_name == other.first_node_name &&
                last_node_name == other.last_node_name && input_srcs == other.input_srcs &&
                weight_buffer_ids == other.weight_buffer_ids;
     }

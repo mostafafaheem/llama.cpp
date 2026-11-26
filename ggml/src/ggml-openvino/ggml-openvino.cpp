@@ -1598,8 +1598,8 @@ static bool is_gemma3n_flash_attn_pattern(const ggml_tensor * op) {
 
     // Gemma4 vision rotates the two head halves with consecutive spatial RoPEs.
     const auto * q = op->src[0];
-    if (q->op == GGML_OP_PERMUTE && q->src[0]->op == GGML_OP_ROPE &&
-        q->src[0]->src[0] && q->src[0]->src[0]->op == GGML_OP_ROPE) {
+    if (q->op == GGML_OP_PERMUTE && q->src[0]->op == GGML_OP_ROPE && q->src[0]->src[0] &&
+        q->src[0]->src[0]->op == GGML_OP_ROPE) {
         return false;
     }
 

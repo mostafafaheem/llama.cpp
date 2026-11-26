@@ -157,6 +157,7 @@ public:
     static bool is_dynamic_vision_graph(const ggml_cgraph * cgraph);
     // OV order: -2 reads the runtime target; -1 infers one extent; nonnegative values are invariant.
     static std::vector<int64_t> vision_reshape_pattern(const ggml_tensor * node);
+
     std::vector<int64_t> get_vision_reshape_pattern(int node_idx) const override {
         return vision_reshape_pattern(m_node_info_list[node_idx].node);
     }
@@ -459,8 +460,8 @@ public:
 
     // The execution path supplies the structural vision classification once per compute.
     static std::pair<ModelParams, ComputeParams> compute_llm_params(ggml_cgraph * cgraph,
-                                                                  bool is_static,
-                                                                  bool dynamic_vision = false);
+                                                                    bool is_static,
+                                                                    bool dynamic_vision = false);
 
     const ModelParams & get_model_params() const { return m_model_params; }
 
@@ -540,8 +541,8 @@ public:
             return false;
         }
         // Gemma applies per-token scaling to supplied image embeddings.
-        const bool scaled_input = op->op == GGML_OP_MUL && (tensor->flags & GGML_TENSOR_FLAG_INPUT) &&
-                                  is_inp_scale_rows(op->src[1], op);
+        const bool scaled_input =
+            op->op == GGML_OP_MUL && (tensor->flags & GGML_TENSOR_FLAG_INPUT) && is_inp_scale_rows(op->src[1], op);
         return (op->op == GGML_OP_RMS_NORM || op->op == GGML_OP_L2_NORM || scaled_input) && op->src[0] == tensor &&
                (tensor->op == GGML_OP_NONE || tensor->op == GGML_OP_CPY);
     }
@@ -569,9 +570,8 @@ public:
 
     // per-token embedding scale [1, n_tokens] (inp->scale_rows in llama-graph.cpp)
     static bool is_inp_scale_rows(const ggml_tensor * tensor, const ggml_tensor * op) {
-        return tensor && op->op == GGML_OP_MUL && tensor == op->src[1] &&
-               (tensor->flags & GGML_TENSOR_FLAG_INPUT) && tensor->type == GGML_TYPE_F32 &&
-               tensor->ne[0] == 1 && tensor->ne[2] == 1 && tensor->ne[3] == 1 &&
+        return tensor && op->op == GGML_OP_MUL && tensor == op->src[1] && (tensor->flags & GGML_TENSOR_FLAG_INPUT) &&
+               tensor->type == GGML_TYPE_F32 && tensor->ne[0] == 1 && tensor->ne[2] == 1 && tensor->ne[3] == 1 &&
                op->src[0]->ne[1] == tensor->ne[1] && op->src[0]->ne[2] == 1 && op->src[0]->ne[3] == 1;
     }
 

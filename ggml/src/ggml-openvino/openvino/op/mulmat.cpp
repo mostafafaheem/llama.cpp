@@ -3,8 +3,6 @@
 #include "../utils.h"
 #include "ggml.h"
 
-#include "../precision_control.hpp"
-
 #include <climits>
 #include <cstdint>
 #include <memory>

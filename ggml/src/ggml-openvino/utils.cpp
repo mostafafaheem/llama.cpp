@@ -315,7 +315,9 @@ static std::string compiled_graph_key(const ggml_cgraph * graph,
             append_string(input.second.parameter_shape.to_string());
         } else {
             append(input.second.shape.size());
-            for (auto dim : input.second.shape) { append(dim); }
+            for (auto dim : input.second.shape) {
+                append(dim);
+            }
         }
         append(input.second.is_parameter);
         if (!input.second.is_parameter) {
@@ -374,7 +376,9 @@ static std::string dynamic_graph_signature(const ggml_cgraph * graph,
             append_string(input.parameter_shape.to_string());
         } else {
             append(input.shape.size());
-            for (auto dim : input.shape) { append(dim); }
+            for (auto dim : input.shape) {
+                append(dim);
+            }
         }
         append(input.is_parameter);
         if (!input.is_parameter) {

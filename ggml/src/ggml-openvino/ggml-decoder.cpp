@@ -5,8 +5,8 @@
 #include "ggml-openvino.h"
 #include "ggml-quants.h"
 #include "ggml.h"
-#include "utils.h"
 #include "openvino/utils.h"
+#include "utils.h"
 
 #include <algorithm>
 #include <cassert>
@@ -309,7 +309,9 @@ std::string GgmlOvDecoder::get_position_input_ov_name(const ggml_tensor * tensor
     for (int i = 0; i < m_cgraph->n_nodes; ++i) {
         const auto * node = m_cgraph->nodes[i];
         if (node->op == GGML_OP_ROPE) {
-            if (node->src[1] != tensor) { return get_tensor_name(m_cgraph, tensor); }
+            if (node->src[1] != tensor) {
+                return get_tensor_name(m_cgraph, tensor);
+            }
             break;
         }
     }
@@ -450,19 +452,24 @@ bool GgmlOvDecoder::is_gdn_out_prescaled(const ggml_tensor * gdn) const {
 }
 
 static bool is_gdn_output_gate_view(const ggml_tensor * node, const ggml_cgraph * graph) {
-    if (node->op != GGML_OP_VIEW || !ggml_is_contiguous(node) || node->view_offs != 0 ||
-        !node->src[0] || node->src[0]->op != GGML_OP_MUL_MAT ||
-        ggml_nelements(node) != ggml_nelements(node->src[0])) {
+    if (node->op != GGML_OP_VIEW || !ggml_is_contiguous(node) || node->view_offs != 0 || !node->src[0] ||
+        node->src[0]->op != GGML_OP_MUL_MAT || ggml_nelements(node) != ggml_nelements(node->src[0])) {
         return false;
     }
     for (int i = 0; i < graph->n_nodes; ++i) {
         const auto * consumer = graph->nodes[i];
-        if (consumer->op != GGML_OP_MUL || std::memcmp(node->ne, consumer->ne, sizeof(node->ne)) != 0) { continue; }
+        if (consumer->op != GGML_OP_MUL || std::memcmp(node->ne, consumer->ne, sizeof(node->ne)) != 0) {
+            continue;
+        }
         for (int j = 0; j < 2; ++j) {
             const auto * gate = consumer->src[j];
             const auto * norm = consumer->src[1 - j];
-            if (gate->op != GGML_OP_UNARY || gate->src[0] != node) { continue; }
-            if (norm->op == GGML_OP_MUL) { norm = norm->src[0]; }
+            if (gate->op != GGML_OP_UNARY || gate->src[0] != node) {
+                continue;
+            }
+            if (norm->op == GGML_OP_MUL) {
+                norm = norm->src[0];
+            }
             if (norm->op == GGML_OP_RMS_NORM && norm->src[0]->op == GGML_OP_VIEW &&
                 norm->src[0]->src[0]->op == GGML_OP_GATED_DELTA_NET) {
                 return true;
@@ -991,18 +998,18 @@ std::vector<int64_t> GgmlOvDecoder::vision_reshape_pattern(const ggml_tensor * n
         return {1, 1, -1, node->ne[0]};
     }
     if (node->op == GGML_OP_RESHAPE && src->op == GGML_OP_MUL_MAT && src->src[0] &&
-        src->src[0]->op == GGML_OP_RESHAPE && src->src[0]->src[0]->op == GGML_OP_IM2COL &&
-        node->ne[2] == 1 && node->ne[3] == src->ne[1]) {
+        src->src[0]->op == GGML_OP_RESHAPE && src->src[0]->src[0]->op == GGML_OP_IM2COL && node->ne[2] == 1 &&
+        node->ne[3] == src->ne[1]) {
         // Unflatten patch convolution: [channels, 1, patch_height, patch_width].
         return {node->ne[3], 1, -2, -2};
     }
-    if (node->op == GGML_OP_RESHAPE && src->op == GGML_OP_CONT && src->ne[3] == 1 &&
-        node->ne[0] == src->ne[0] && node->ne[1] == src->ne[1] && node->ne[2] * node->ne[3] == src->ne[2]) {
+    if (node->op == GGML_OP_RESHAPE && src->op == GGML_OP_CONT && src->ne[3] == 1 && node->ne[0] == src->ne[0] &&
+        node->ne[1] == src->ne[1] && node->ne[2] * node->ne[3] == src->ne[2]) {
         // Split rows into fixed-size merge groups while retaining both grid axes.
         return {-2, node->ne[2], -2, node->ne[0]};
     }
-    if (node->op == GGML_OP_CONT && src->ne[3] == 1 && node->ne[3] == 1 &&
-        node->ne[2] == src->ne[2] && node->ne[0] * node->ne[1] == src->ne[0] * src->ne[1]) {
+    if (node->op == GGML_OP_CONT && src->ne[3] == 1 && node->ne[3] == 1 && node->ne[2] == src->ne[2] &&
+        node->ne[0] * node->ne[1] == src->ne[0] * src->ne[1]) {
         // Merge adjacent patch features into each column; the feature width is fixed.
         return {1, -2, -2, node->ne[0]};
     }
@@ -1016,25 +1023,42 @@ bool GgmlOvDecoder::is_dynamic_vision_graph(const ggml_cgraph * cgraph) {
     for (int i = 0; i < cgraph->n_nodes; ++i) {
         const auto * node = cgraph->nodes[i];
         switch (node->op) {
-        case GGML_OP_NONE: case GGML_OP_RESHAPE: case GGML_OP_PERMUTE: case GGML_OP_CONT:
-        case GGML_OP_VIEW: case GGML_OP_MUL_MAT: case GGML_OP_ADD: case GGML_OP_MUL:
-        case GGML_OP_NORM: case GGML_OP_RMS_NORM: case GGML_OP_UNARY: case GGML_OP_CPY:
+        case GGML_OP_NONE:
+        case GGML_OP_RESHAPE:
+        case GGML_OP_PERMUTE:
+        case GGML_OP_CONT:
+        case GGML_OP_VIEW:
+        case GGML_OP_MUL_MAT:
+        case GGML_OP_ADD:
+        case GGML_OP_MUL:
+        case GGML_OP_NORM:
+        case GGML_OP_RMS_NORM:
+        case GGML_OP_UNARY:
+        case GGML_OP_CPY:
             break;
         case GGML_OP_IM2COL:
-            if (node->op_params[6] != 1) { return false; }
-            image_patches |= node->src[1] && node->src[1]->op == GGML_OP_NONE &&
-                             (node->src[1]->flags & GGML_TENSOR_FLAG_INPUT);
+            if (node->op_params[6] != 1) {
+                return false;
+            }
+            image_patches |=
+                node->src[1] && node->src[1]->op == GGML_OP_NONE && (node->src[1]->flags & GGML_TENSOR_FLAG_INPUT);
             break;
         case GGML_OP_UPSCALE:
             // Spatial position-grid interpolation; channel/batch resampling stays static.
-            if (node->ne[2] != node->src[0]->ne[2] || node->ne[3] != node->src[0]->ne[3]) { return false; }
+            if (node->ne[2] != node->src[0]->ne[2] || node->ne[3] != node->src[0]->ne[3]) {
+                return false;
+            }
             break;
         case GGML_OP_ROPE:
-            if (node->op_params[2] != GGML_ROPE_TYPE_VISION) { return false; }
+            if (node->op_params[2] != GGML_ROPE_TYPE_VISION) {
+                return false;
+            }
             vision_rope = true;
             break;
         case GGML_OP_FLASH_ATTN_EXT:
-            if (node->src[3] || node->src[4]) { return false; }
+            if (node->src[3] || node->src[4]) {
+                return false;
+            }
             attention = true;
             break;
         default:
@@ -1052,18 +1076,22 @@ bool GgmlOvDecoder::is_dynamic_vision_graph(const ggml_cgraph * cgraph) {
     // Require declared inputs or weights at graph boundaries before enabling spatial reuse.
     for (int i = 0; i < cgraph->n_nodes; ++i) {
         for (const auto * src : cgraph->nodes[i]->src) {
-            if (!src || nodes.count(src)) { continue; }
+            if (!src || nodes.count(src)) {
+                continue;
+            }
             const auto * root = src->view_src ? src->view_src : src;
             if (!(root->flags & GGML_TENSOR_FLAG_INPUT) &&
-                !(root->buffer && root->buffer->usage == GGML_BACKEND_BUFFER_USAGE_WEIGHTS)) { return false; }
+                !(root->buffer && root->buffer->usage == GGML_BACKEND_BUFFER_USAGE_WEIGHTS)) {
+                return false;
+            }
         }
     }
     return true;
 }
 
 std::pair<ModelParams, ComputeParams> GgmlOvDecoder::compute_llm_params(ggml_cgraph * cgraph,
-                                                                      bool is_static,
-                                                                      bool dynamic_vision) {
+                                                                        bool is_static,
+                                                                        bool dynamic_vision) {
     ModelParams model_params;
     ComputeParams compute_params;
     model_params.is_dynamic_vision = !is_static && dynamic_vision;
@@ -1627,8 +1655,7 @@ ov::PartialShape GgmlOvDecoder::get_graph_input_shape(const ggml_tensor * op,
     ov::PartialShape input_shape;
     bool kv_layout_4d = false;
 
-    if (m_model_params.is_dynamic_vision && input && op->op == GGML_OP_IM2COL &&
-        input == op->src[1]) {
+    if (m_model_params.is_dynamic_vision && input && op->op == GGML_OP_IM2COL && input == op->src[1]) {
         return ov::PartialShape{input->ne[3], input->ne[2], -1, -1};
     }
 
@@ -1851,15 +1878,31 @@ void GgmlOvDecoder::add_extra_inputs() {
     }
     for (int i = 0; i < m_cgraph->n_nodes && !m_compute_params.vision_projections.empty(); ++i) {
         const auto * node = m_cgraph->nodes[i];
-        if (node->op != GGML_OP_UPSCALE) { continue; }
+        if (node->op != GGML_OP_UPSCALE) {
+            continue;
+        }
         const auto name = get_tensor_ov_name(m_cgraph, node);
-        if (m_compute_params.vision_projections.count("vision_y_" + name) == 0) { continue; }
-        m_model_extra_inputs["vision_y_" + name] = {ov::element::f32,
-            ov::Shape{size_t(node->ne[1]), size_t(node->src[0]->ne[1])}, 0, true, {}, -1,
-            ov::PartialShape{-1, node->src[0]->ne[1]}};
-        m_model_extra_inputs["vision_x_" + name] = {ov::element::f32,
-            ov::Shape{size_t(node->src[0]->ne[0]), size_t(node->ne[0])}, 0, true, {}, -1,
-            ov::PartialShape{node->src[0]->ne[0], -1}};
+        if (m_compute_params.vision_projections.count("vision_y_" + name) == 0) {
+            continue;
+        }
+        m_model_extra_inputs["vision_y_" + name] = {
+            ov::element::f32,
+            ov::Shape{size_t(node->ne[1]), size_t(node->src[0]->ne[1])},
+            0,
+            true,
+            {},
+            -1,
+            ov::PartialShape{-1, node->src[0]->ne[1]}
+        };
+        m_model_extra_inputs["vision_x_" + name] = {
+            ov::element::f32,
+            ov::Shape{size_t(node->src[0]->ne[0]), size_t(node->ne[0])},
+            0,
+            true,
+            {},
+            -1,
+            ov::PartialShape{node->src[0]->ne[0], -1}
+        };
     }
 
     if (m_compute_params.attention_size != -1) {

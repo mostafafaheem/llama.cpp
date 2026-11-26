@@ -74,8 +74,8 @@ std::shared_ptr<ov::op::v0::Parameter> create_parameter(const std::string & name
 
 std::shared_ptr<ov::Node> create_extra_input(const std::string & name, const ModelExtraInputInfo & input_info) {
     if (input_info.is_parameter) {
-        ov::PartialShape shape = input_info.parameter_shape.rank().is_static() ?
-                                     input_info.parameter_shape : ov::PartialShape(input_info.shape);
+        ov::PartialShape shape = input_info.parameter_shape.rank().is_static() ? input_info.parameter_shape :
+                                                                                 ov::PartialShape(input_info.shape);
         // One SET_ROWS emits min(tokens, snapshot capacity) windows on each batch.
         if (name.compare(0, 11, "rs_windows_") == 0) {
             shape[2] = ov::Dimension::dynamic();

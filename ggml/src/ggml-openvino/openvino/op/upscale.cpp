@@ -70,9 +70,9 @@ OutputVector translate_upscale(const NodeContext & context) {
                 Wx_node = context.get_input("vision_x_" + context.get_name());
             } else {
                 Wy_node = ov::op::v0::Constant::create(ov::element::f32, {H_out, H_in},
-                    bilinear_antialias_projection(H_in, H_out, false));
+                                                       bilinear_antialias_projection(H_in, H_out, false));
                 Wx_node = ov::op::v0::Constant::create(ov::element::f32, {W_in, W_out},
-                    bilinear_antialias_projection(W_in, W_out, true));
+                                                       bilinear_antialias_projection(W_in, W_out, true));
             }
 
             auto res_y = std::make_shared<ov::op::v0::MatMul>(Wy_node, res);
@@ -116,8 +116,9 @@ OutputVector translate_upscale(const NodeContext & context) {
                 static_cast<float>(output_shape[3]) / static_cast<float>(input_shape[3]),
             };
 
-            ov::Output<Node> target_shape_node = dynamic ? context.get_input("vision_size_" + context.get_name()) :
-                ov::op::v0::Constant::create(ov::element::i64, {2}, target_shape_vec);
+            ov::Output<Node> target_shape_node =
+                dynamic ? context.get_input("vision_size_" + context.get_name()) :
+                          ov::op::v0::Constant::create(ov::element::i64, {2}, target_shape_vec);
             auto scales_node = ov::op::v0::Constant::create(ov::element::f32, {2}, scales_vec);
             auto axes_node = ov::op::v0::Constant::create(ov::element::i64, {2}, {2, 3});
 

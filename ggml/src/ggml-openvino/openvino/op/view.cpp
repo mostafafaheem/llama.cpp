@@ -19,10 +19,12 @@ OutputVector translate_view(const NodeContext & context) {
     if (context.get_op_case() == 5) {
         const auto shape = context.get_output_shape();
         // Keep the output gate grouped like GDN: [active sequences, tokens per sequence, heads, width].
-        auto target = std::make_shared<ov::op::v0::Concat>(ov::OutputVector{
-            context.get_input("s_copy_active_slot_len"),
-            ov::op::v0::Constant::create(ov::element::i64, {3},
-                std::vector<int64_t>{-1, shape[2].get_length(), shape[3].get_length()})}, 0);
+        auto target = std::make_shared<ov::op::v0::Concat>(
+            ov::OutputVector{
+                context.get_input("s_copy_active_slot_len"),
+                ov::op::v0::Constant::create(ov::element::i64, {3},
+                                             std::vector<int64_t>{-1, shape[2].get_length(), shape[3].get_length()})},
+            0);
         return rename_outputs_with_suffix({std::make_shared<ov::op::v1::Reshape>(context.get_input(0), target, false)},
                                           context.get_name());
     }

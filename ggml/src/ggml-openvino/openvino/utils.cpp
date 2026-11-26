@@ -44,8 +44,8 @@ ov::Output<Node> vision_reshape_target(const NodeContext & context) {
     ov::OutputVector dimensions;
     for (size_t axis = 0; axis < pattern.size(); ++axis) {
         if (pattern[axis] == -2) {
-            dimensions.push_back(std::make_shared<ov::op::v8::Gather>(runtime,
-                ov::op::v0::Constant::create(ov::element::i64, {1}, {int64_t(axis)}),
+            dimensions.push_back(std::make_shared<ov::op::v8::Gather>(
+                runtime, ov::op::v0::Constant::create(ov::element::i64, {1}, {int64_t(axis)}),
                 ov::op::v0::Constant::create(ov::element::i64, {}, {0})));
         } else {
             dimensions.push_back(ov::op::v0::Constant::create(ov::element::i64, {1}, {pattern[axis]}));

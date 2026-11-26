@@ -25,7 +25,8 @@ OutputVector translate_cont(const NodeContext & context) {
             return rename_outputs_with_suffix({input}, context.get_name());
         }
         auto target = vision_reshape_target(context);
-        return rename_outputs_with_suffix({std::make_shared<ov::op::v1::Reshape>(input, target, false)}, context.get_name());
+        return rename_outputs_with_suffix({std::make_shared<ov::op::v1::Reshape>(input, target, false)},
+                                          context.get_name());
     }
 
     if (context.get_op_dynamic_dim() != -1) {
