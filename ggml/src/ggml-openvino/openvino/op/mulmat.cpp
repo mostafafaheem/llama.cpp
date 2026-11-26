@@ -5,6 +5,7 @@
 
 #include "../precision_control.hpp"
 
+#include <climits>
 #include <cstdint>
 #include <memory>
 #include <openvino/core/node.hpp>
@@ -23,6 +24,9 @@
 #include <vector>
 
 namespace ov {
+// Runtime SDKs omit the transformation header but export this helper.
+OPENVINO_API void disable_conversion(const std::shared_ptr<Node> & node, const element::Type & to);
+
 namespace frontend {
 namespace ggml {
 namespace op {
